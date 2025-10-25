@@ -1,0 +1,82 @@
+,,,,,,Connect,,
+Manual,Bloco 1 - CRUD,,Comunicação,Arq Repo,Core,DICT,Bridge,Simulador
+3,Criar chave,Registro por solicitação do LB,Sync,,N,S,S,S
+4,Exclusão de chaves,Exclusão de chave por incompatibilidade de dados com a receita federal,Sync,,N,S,S,S
+4,Exclusão de chaves,Exclusão de chave por solicitação do usuário final,Sync,,N,S,S,S
+4,Exclusão de chaves,Exclusão de chave iniciado pelo participante ( Encerramento ),Sync,,N,S,S,S
+4,Exclusão de chaves,Exclusão de chave iniciado pelo participante ( Sincronismo ),Sync,,N,S,S,S
+4,Exclusão de chaves,Exclusão de chave iniciado por fraude,Sync,,N,S,S,S
+4,Exclusão de chaves,Status da chave (Bloqueio judicial),Sync,,N,S,S,S
+8,Consulta de chave,Consulta para o participante do pix,Sync,,N,S,S,S
+7,Alteração dos dados,Alteração dos dados vinculados à chave,Sync,,N,S,S,S
+7,Alteração dos dados,Alteração dos dados vinculados à chave para correção de inconsistências,Sync,,N,S,S,S
+,Validar chave,checklist de chaves,Sync,,N,S,S,S
+,,,,,,,,
+,Bloco 2 - Reivindicação,,Comunicação,Arq Repo,Core,DICT,Bridge,Simulador
+6,Reivindicação - Reivindicador,Criação,Async,,N,S,S,S
+6,Reivindicação - Reivindicador,Cancelamento,Async,,N,S,S,S
+6,Reivindicação - Reivindicador,Conclusão,Async,,N,S,S,S
+6,Reivindicação - Reivindicador,Receber ( Monitorar ),Sync,,N,S,S,S
+6,Reivindicação - Reivindicador,Listagem,Sync,,N,S,S,S
+6,Reivindicação - Reivindicador,Consultar,Sync,,N,S,S,S
+6,Reivindicação - Doador,Receber ( Monitorar ),Sync,,N,N,S,S
+6,Reivindicação - Doador,Confirmação,Async,,N,N,S,S
+6,Reivindicação - Doador,Cancelamento,Async,,N,N,S,S
+6,Reivindicação - Doador,Consultar,Sync,,N,N,S,S
+6,Reivindicação - Doador,Listagem,Sync,,N,N,S,S
+5,Portabilidade de chave,Portabilidade para o psp reivindicador,,,N,N,S,S
+5,Portabilidade de chave,Portabilidade para o psp doador,,,N,N,S,S
+,,,,,,,,
+,Bloco 3 - Validação,,,,,,,
+2,Validação das chaves,Validação da posse,,,N,X,X,X
+2,Validação das chaves,Validação da situação cadastral do usuário na receita federal,,,N,N,X,X
+2,Validação das chaves,Validações dos nomes vinculados,,,N,X,X,X
+,,,,,,,,
+,Bloco 4 - Devolução e infração,,,,,,,
+17,Solicitação de devolução ,fluxo de solicitação de devolução por “falha operacional do psp do pagador”,,,N,N,S,N
+17,Solicitação de devolução ,fluxo de solicitação de devolução por “fundada suspeita de fraude”,,,N,N,S,N
+17,Solicitação de devolução ,fluxo de cancelamento de devolução,,,N,N,S,N
+10,Notificação de infração ,fluxo de notificação de infração para abertura de solicitação de devolução (participantes do pix com acesso direto ao dict) ,,,N,N,S,N
+10,Notificação de infração ,fluxo de notificação de infração para cancelamento de devolução entre participantes do pix com acesso direto ao dict ,,,N,N,S,N
+10,Notificação de infração ,notificação de infração para marcação de fraude transacional ,,,N,N,S,N
+,,,,,,,,
+,Bloco 5 - Segurança e infra,,,,,,,
+13,Mecanismos de prevenção a ataques de leitura , Verificação de autenticidade do usuário solicitante da consulta ,,,N,N,N,N
+13,Mecanismos de prevenção a ataques de leitura , Estabelecimento de política interna de limitação de consultas ,,,N,N,N,N
+13,Mecanismos de prevenção a ataques de leitura , Monitoramento qualitativo e permanente das consultas ,,,N,N,N,N
+13,Mecanismos de prevenção a ataques de leitura , Plano de ação para tratamento de casos suspeitos ,,,N,N,N,N
+13,Mecanismos de prevenção a ataques de leitura , Restrição dos dados da chave exibidos ao usuário que faz a consulta ,,,N,N,N,N
+14,Comunicação e segurança,limitação de requisições à api do dict,,,N,N,N,N
+19,Comunicação e segurança,consulta de baldes,,,N,N,N,N
+15,Comunicação e segurança,Verificação de chaves pix registradas,,,N,N,N,N
+11,Comunicação e segurança,Interface de comunicação,,,N,N,N,N
+16,Comunicação e segurança,Cache de existência de chave pix,,,N,N,N,N
+12,Comunicação e segurança,Cache de chaves consultadas,,,N,N,N,N
+18,Comunicação e segurança,Consulta a informações de segurança,,,N,N,N,N
+9,Comunicação e segurança, verificação de vsync (participante do pix com acesso direto ao dict) ,,,N,N,N,N
+9,Comunicação e segurança, lista de cids ,,,N,N,N,N
+,,,,,,,,
+,Bloco 6 - Recuperação de valores,,,,,,,
+20,Recuperação de valores, Instauração no fluxo interativo: Início manual do processo.,,,N,N,N,N
+20,Recuperação de valores, Rastreamento: Acompanhamento da movimentação dos valores.,,,N,N,N,N
+20,Recuperação de valores, Priorização: Definição de ordem de tratamento.,,,N,N,N,N
+20,Recuperação de valores, Solicitação de bloqueio: Pedido para congelar valores suspeitos.,,,N,N,N,N
+20,Recuperação de valores, Instauração no fluxo automatizado: Início automático via sistema.,,,N,N,N,N
+20,Recuperação de valores, Etapa de análise: Verificação dos dados e justificativas.,,,N,N,N,N
+20,Recuperação de valores, Etapa de devolução: Retorno dos valores ao legítimo dono.,,,N,N,N,N
+20,Recuperação de valores, Desbloqueio dos recursos: Liberação de valores após análise.,,,N,N,N,N
+20,Recuperação de valores, Recuperação para transações liquidadas: Tratamento especial para valores já processados nos sistemas dos participantes.,,,N,N,N,N
+20,Recuperação de valores, Fluxo Interativo – Instauração e Bloqueio,,,N,N,N,N
+20,Recuperação de valores, Fluxo Automatizado – Instauração e Bloqueio,,,N,N,N,N
+20,Recuperação de valores, Fluxo de Análise,,,N,N,N,N
+20,Recuperação de valores, Fluxo de Devolução,,,N,N,N,N
+,,,,,,,,
+,DICT Repo,https://github.com/lb-conn/connector-dict,,,,,,
+,Bridge Repo,https://github.com/lb-conn/rsfn-connect-bacen-bridge/,,,,,,
+,Simulador Repo,https://github.com/lb-conn/simulator-dict,,,,,,
+,Core Repo,https://github.com/london-bridge/money-moving/tree/main/apps/payment,CRUD de chaves,,,,,
+,Core Repo, https://github.com/london-bridge/orchestration-go,,,,,,
+,Core Repo,https://github.com/london-bridge/operation/tree/main/apps/service,,,,,,
+,Core Repo, https://github.com/london-bridge/lb-contracts,,,,,,
+,,,,,,,,
+,,,,,,,,
