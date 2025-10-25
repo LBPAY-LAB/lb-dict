@@ -1,0 +1,43 @@
+# Repositórios Git aninhados (excluir do controle de versão)
+../LB-BO/
+../TBLedger/
+../blackstone-tmp/
+../blackstone_backup/
+../blnk/
+../coreblock/
+../iBack/
+../inpi/
+../lb-PixApi/
+../lb-approvalhub/
+../lb-broker/
+../lb-datalake/
+../lb-dict/
+../lb-flow/
+../lb-notification/
+../lb-opamanager/
+../lbledger/
+../ledger-final/
+../ledger-service-teste/
+../ledger_lab/
+../proteus/
+../repos-lbpay-dict/
+../scripts-lbprod/
+../smartledger/
+../tigerlings/
+../xPDF/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
