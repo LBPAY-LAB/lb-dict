@@ -39,11 +39,13 @@ enum DocumentType {
 // EntryStatus: Status de uma chave DICT
 enum EntryStatus {
   ENTRY_STATUS_UNSPECIFIED = 0;
-  ENTRY_STATUS_ACTIVE = 1;
-  ENTRY_STATUS_PORTABILITY_PENDING = 2;
-  ENTRY_STATUS_PORTABILITY_CONFIRMED = 3;
-  ENTRY_STATUS_CLAIM_PENDING = 4;
-  ENTRY_STATUS_DELETED = 5;
+  ENTRY_STATUS_PENDING = 1;                    // Pendente (aguardando confirmação)
+  ENTRY_STATUS_ACTIVE = 2;                     // Ativa (pode receber PIX)
+  ENTRY_STATUS_BLOCKED = 3;                    // Bloqueada (não pode receber PIX)
+  ENTRY_STATUS_PORTABILITY_PENDING = 4;        // Portabilidade pendente
+  ENTRY_STATUS_PORTABILITY_CONFIRMED = 5;      // Portabilidade confirmada
+  ENTRY_STATUS_CLAIM_PENDING = 6;              // Reivindicação pendente
+  ENTRY_STATUS_DELETED = 7;                    // Deletada (soft delete)
 }
 
 // ClaimStatus: Status de uma reivindicação (30 dias)
@@ -55,6 +57,7 @@ enum ClaimStatus {
   CLAIM_STATUS_CANCELLED = 4;
   CLAIM_STATUS_COMPLETED = 5;
   CLAIM_STATUS_EXPIRED = 6;
+  CLAIM_STATUS_AUTO_CONFIRMED = 7;  // Auto-confirmada após timeout
 }
 
 // ====================================================================
