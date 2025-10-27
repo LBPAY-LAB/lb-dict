@@ -1,0 +1,63 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Compiled binaries (specific paths)
+bin/core-dict-grpc
+
+# Test binary
+*.test
+*.out
+
+# Go workspace
+go.work
+
+# Build artifacts
+build/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.real_mode
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

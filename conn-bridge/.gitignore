@@ -5,6 +5,9 @@ bin/
 *.so
 *.dylib
 
+# Compiled binaries (root level)
+bridge
+
 # Test binary
 *.test
 *.out
