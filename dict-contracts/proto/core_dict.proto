@@ -1,0 +1,374 @@
+syntax = "proto3";
+
+package dict.core.v1;
+
+option go_package = "github.com/lbpay-lab/dict-contracts/gen/proto/core/v1;corev1";
+
+import "proto/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ====================================================================
+// CORE DICT SERVICE - FrontEnd → Core DICT
+// ====================================================================
+service CoreDictService {
+  // ========== Key Operations (Chaves PIX) ==========
+
+  // Criar nova chave PIX para usuário autenticado
+  rpc CreateKey(CreateKeyRequest) returns (CreateKeyResponse);
+
+  // Listar todas as chaves do usuário autenticado
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // Obter detalhes de uma chave específica
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Deletar chave PIX
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+
+  // ========== Claim Operations (Reivindicações - 30 dias) ==========
+
+  // Iniciar reivindicação de chave de outro usuário
+  rpc StartClaim(StartClaimRequest) returns (StartClaimResponse);
+
+  // Verificar status de uma claim
+  rpc GetClaimStatus(GetClaimStatusRequest) returns (GetClaimStatusResponse);
+
+  // Listar claims recebidas (onde sou o dono da chave)
+  rpc ListIncomingClaims(ListIncomingClaimsRequest) returns (ListIncomingClaimsResponse);
+
+  // Listar claims enviadas (onde sou o reivindicador)
+  rpc ListOutgoingClaims(ListOutgoingClaimsRequest) returns (ListOutgoingClaimsResponse);
+
+  // Responder a uma claim (aceitar ou rejeitar)
+  rpc RespondToClaim(RespondToClaimRequest) returns (RespondToClaimResponse);
+
+  // Cancelar claim enviada (apenas reivindicador)
+  rpc CancelClaim(CancelClaimRequest) returns (CancelClaimResponse);
+
+  // ========== Portability Operations (Portabilidade de Conta) ==========
+
+  // Iniciar portabilidade de chave para nova conta
+  rpc StartPortability(StartPortabilityRequest) returns (StartPortabilityResponse);
+
+  // Confirmar portabilidade
+  rpc ConfirmPortability(ConfirmPortabilityRequest) returns (ConfirmPortabilityResponse);
+
+  // Cancelar portabilidade
+  rpc CancelPortability(CancelPortabilityRequest) returns (CancelPortabilityResponse);
+
+  // ========== Query Operations (Consultas) ==========
+
+  // Consultar chave DICT de terceiros (para transações PIX)
+  rpc LookupKey(LookupKeyRequest) returns (LookupKeyResponse);
+
+  // ========== Health Check ==========
+
+  // Health check do Core DICT
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+// ====================================================================
+// KEY OPERATIONS - Messages
+// ====================================================================
+
+message CreateKeyRequest {
+  // Tipo de chave PIX
+  dict.common.v1.KeyType key_type = 1;
+
+  // Valor da chave (opcional se EVP - será gerado)
+  string key_value = 2;
+
+  // Conta a vincular à chave
+  string account_id = 3;  // ID da conta no sistema LBPay
+}
+
+message CreateKeyResponse {
+  // ID da key criada
+  string key_id = 1;
+
+  // Tipo e valor da chave
+  dict.common.v1.DictKey key = 2;
+
+  // Status (sempre ACTIVE ao criar)
+  dict.common.v1.EntryStatus status = 3;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message ListKeysRequest {
+  // Paginação
+  int32 page_size = 1;  // Default: 20, Max: 100
+  string page_token = 2;
+
+  // Filtros opcionais
+  optional dict.common.v1.KeyType key_type = 3;
+  optional dict.common.v1.EntryStatus status = 4;
+}
+
+message ListKeysResponse {
+  // Lista de chaves do usuário
+  repeated KeySummary keys = 1;
+
+  // Token para próxima página (vazio se última página)
+  string next_page_token = 2;
+
+  // Total de keys do usuário
+  int32 total_count = 3;
+}
+
+message KeySummary {
+  string key_id = 1;
+  dict.common.v1.DictKey key = 2;
+  dict.common.v1.EntryStatus status = 3;
+  string account_id = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message GetKeyRequest {
+  // ID da key ou valor da key
+  oneof identifier {
+    string key_id = 1;
+    dict.common.v1.DictKey key = 2;
+  }
+}
+
+message GetKeyResponse {
+  string key_id = 1;
+  dict.common.v1.DictKey key = 2;
+  dict.common.v1.Account account = 3;
+  dict.common.v1.EntryStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+
+  // Histórico de portabilidades (se houver)
+  repeated PortabilityHistory portability_history = 7;
+}
+
+message PortabilityHistory {
+  string portability_id = 1;
+  dict.common.v1.Account old_account = 2;
+  dict.common.v1.Account new_account = 3;
+  google.protobuf.Timestamp confirmed_at = 4;
+}
+
+message DeleteKeyRequest {
+  string key_id = 1;
+}
+
+message DeleteKeyResponse {
+  bool deleted = 1;
+  google.protobuf.Timestamp deleted_at = 2;
+}
+
+// ====================================================================
+// CLAIM OPERATIONS - Messages (30 dias)
+// ====================================================================
+
+message StartClaimRequest {
+  // Chave a ser reivindicada
+  dict.common.v1.DictKey key = 1;
+
+  // Conta do reivindicador (destino)
+  string account_id = 2;  // ID da conta no sistema LBPay
+}
+
+message StartClaimResponse {
+  // ID da claim criada
+  string claim_id = 1;
+
+  // ID da entry reivindicada
+  string entry_id = 2;
+
+  // Status inicial (sempre OPEN)
+  dict.common.v1.ClaimStatus status = 3;
+
+  // Data de expiração (created_at + 30 dias)
+  google.protobuf.Timestamp expires_at = 4;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 5;
+
+  // Mensagem para o usuário
+  string message = 6;  // "Claim criada. O dono tem 30 dias para responder"
+}
+
+message GetClaimStatusRequest {
+  string claim_id = 1;
+}
+
+message GetClaimStatusResponse {
+  string claim_id = 1;
+  string entry_id = 2;
+  dict.common.v1.DictKey key = 3;
+
+  // Status atual
+  dict.common.v1.ClaimStatus status = 4;
+
+  // ISPBs envolvidos
+  string claimer_ispb = 5;  // Quem está reivindicando
+  string owner_ispb = 6;    // Dono atual
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  optional google.protobuf.Timestamp completed_at = 9;
+
+  // Tempo restante (para exibir no frontend)
+  int32 days_remaining = 10;
+}
+
+message ListIncomingClaimsRequest {
+  // Filtros
+  optional dict.common.v1.ClaimStatus status = 1;
+
+  // Paginação
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListIncomingClaimsResponse {
+  repeated ClaimSummary claims = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message ListOutgoingClaimsRequest {
+  // Filtros
+  optional dict.common.v1.ClaimStatus status = 1;
+
+  // Paginação
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListOutgoingClaimsResponse {
+  repeated ClaimSummary claims = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message ClaimSummary {
+  string claim_id = 1;
+  string entry_id = 2;
+  dict.common.v1.DictKey key = 3;
+  dict.common.v1.ClaimStatus status = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  int32 days_remaining = 7;
+}
+
+message RespondToClaimRequest {
+  string claim_id = 1;
+
+  // Resposta (aceitar ou rejeitar)
+  enum ClaimResponse {
+    CLAIM_RESPONSE_UNSPECIFIED = 0;
+    CLAIM_RESPONSE_ACCEPT = 1;
+    CLAIM_RESPONSE_REJECT = 2;
+  }
+  ClaimResponse response = 2;
+
+  // Razão (opcional, para rejeição)
+  optional string reason = 3;
+}
+
+message RespondToClaimResponse {
+  string claim_id = 1;
+  dict.common.v1.ClaimStatus new_status = 2;  // CONFIRMED ou CANCELLED
+  google.protobuf.Timestamp responded_at = 3;
+  string message = 4;  // "Claim aceita com sucesso" ou "Claim rejeitada"
+}
+
+message CancelClaimRequest {
+  string claim_id = 1;
+  optional string reason = 2;
+}
+
+message CancelClaimResponse {
+  string claim_id = 1;
+  dict.common.v1.ClaimStatus status = 2;  // CANCELLED
+  google.protobuf.Timestamp cancelled_at = 3;
+}
+
+// ====================================================================
+// PORTABILITY OPERATIONS - Messages
+// ====================================================================
+
+message StartPortabilityRequest {
+  // Chave a sofrer portabilidade
+  string key_id = 1;
+
+  // Nova conta de destino
+  string new_account_id = 2;
+}
+
+message StartPortabilityResponse {
+  string portability_id = 1;
+  string key_id = 2;
+  dict.common.v1.Account new_account = 3;
+  google.protobuf.Timestamp started_at = 4;
+  string message = 5;  // "Portabilidade iniciada. Aguarde confirmação"
+}
+
+message ConfirmPortabilityRequest {
+  string portability_id = 1;
+}
+
+message ConfirmPortabilityResponse {
+  string portability_id = 1;
+  string key_id = 2;
+  dict.common.v1.EntryStatus status = 3;  // ACTIVE (com nova conta)
+  google.protobuf.Timestamp confirmed_at = 4;
+}
+
+message CancelPortabilityRequest {
+  string portability_id = 1;
+  optional string reason = 2;
+}
+
+message CancelPortabilityResponse {
+  string portability_id = 1;
+  google.protobuf.Timestamp cancelled_at = 2;
+}
+
+// ====================================================================
+// QUERY OPERATIONS - Messages
+// ====================================================================
+
+message LookupKeyRequest {
+  // Chave a consultar
+  dict.common.v1.DictKey key = 1;
+}
+
+message LookupKeyResponse {
+  // Dados públicos da chave (para transação PIX)
+  dict.common.v1.DictKey key = 1;
+  dict.common.v1.Account account = 2;  // Apenas dados públicos (ISPB, agência, conta)
+  string account_holder_name = 3;
+
+  // Status (se ACTIVE, pode receber PIX)
+  dict.common.v1.EntryStatus status = 4;
+}
+
+// ====================================================================
+// HEALTH CHECK
+// ====================================================================
+
+message HealthCheckResponse {
+  enum HealthStatus {
+    HEALTH_STATUS_UNSPECIFIED = 0;
+    HEALTH_STATUS_HEALTHY = 1;
+    HEALTH_STATUS_DEGRADED = 2;
+    HEALTH_STATUS_UNHEALTHY = 3;
+  }
+  HealthStatus status = 1;
+
+  // Conectividade com Connect (gRPC)
+  bool connect_reachable = 2;
+
+  // Timestamp do health check
+  google.protobuf.Timestamp checked_at = 3;
+}

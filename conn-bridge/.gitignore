@@ -1,0 +1,74 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+*.out
+
+# Go workspace
+go.work
+
+# Build artifacts
+build/
+dist/
+
+# Certificates (NEVER commit certificates!)
+certs/
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java
+target/
+*.class
+*.jar
+!xml-signer/pom.xml
+
+# Maven
+.mvn/
+mvnw
+mvnw.cmd
+
+# Coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+*.pid
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig

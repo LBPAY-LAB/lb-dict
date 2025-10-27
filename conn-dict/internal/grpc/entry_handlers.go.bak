@@ -1,0 +1,274 @@
+package grpc
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/lbpay-lab/conn-dict/internal/workflows"
+	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// CreateEntry handles the CreateEntry RPC call
+// This method starts a Temporal workflow to process the entry creation
+func (s *Server) CreateEntry(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("CreateEntry called")
+
+	// TODO: Parse request from proto
+	// TODO: Validate request
+
+	// Start Temporal workflow for async processing
+	workflowID := fmt.Sprintf("create-entry-%s", uuid.New().String())
+	// workflowOptions := client.StartWorkflowOptions{
+	// 	ID:        workflowID,
+	// 	TaskQueue: "dict-task-queue",
+	// }
+
+	// TODO: Execute workflow
+	// we, err := s.temporalClient.ExecuteWorkflow(ctx, workflowOptions, "CreateEntryWorkflow", req)
+
+	s.logger.Infof("CreateEntry workflow started: %s", workflowID)
+
+	// Placeholder response
+	return map[string]interface{}{
+		"entry_id":    "placeholder-entry-id",
+		"workflow_id": workflowID,
+		"status":      "PROCESSING",
+		"message":     "Entry creation workflow started",
+	}, nil
+}
+
+// UpdateEntry handles the UpdateEntry RPC call
+func (s *Server) UpdateEntry(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("UpdateEntry called")
+
+	// TODO: Implement update logic
+	// Similar to CreateEntry, start a Temporal workflow
+
+	workflowID := fmt.Sprintf("update-entry-%s", uuid.New().String())
+
+	return map[string]interface{}{
+		"entry_id":    "placeholder-entry-id",
+		"workflow_id": workflowID,
+		"status":      "PROCESSING",
+		"message":     "Entry update workflow started",
+	}, nil
+}
+
+// DeleteEntry handles the DeleteEntry RPC call
+func (s *Server) DeleteEntry(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("DeleteEntry called")
+
+	// TODO: Implement delete logic
+	// Start Temporal workflow for deletion
+
+	workflowID := fmt.Sprintf("delete-entry-%s", uuid.New().String())
+
+	return map[string]interface{}{
+		"entry_id":    "placeholder-entry-id",
+		"workflow_id": workflowID,
+		"status":      "PROCESSING",
+		"message":     "Entry deletion workflow started",
+	}, nil
+}
+
+// GetEntry handles the GetEntry RPC call
+func (s *Server) GetEntry(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("GetEntry called")
+
+	// TODO: Implement get logic
+	// Query database directly (no workflow needed for reads)
+
+	return map[string]interface{}{
+		"entry_id":   "placeholder-entry-id",
+		"key_type":   "CPF",
+		"key_value":  "12345678901",
+		"ispb":       "12345678",
+		"status":     "ACTIVE",
+		"created_at": "2025-10-26T00:00:00Z",
+	}, nil
+}
+
+// CreateClaim handles the CreateClaim RPC call
+// This starts the ClaimWorkflow (30-day claim process)
+func (s *Server) CreateClaim(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("CreateClaim called")
+
+	// TODO: Parse and validate request
+
+	// Generate claim ID
+	claimID := uuid.New().String()
+
+	// Prepare workflow input
+	workflowInput := workflows.ClaimWorkflowInput{
+		ClaimID:        claimID,
+		EntryID:        "placeholder-entry-id",        // TODO: Get from request
+		ClaimType:      "PORTABILITY",                 // TODO: Get from request
+		ClaimerISPB:    "87654321",                    // TODO: Get from request
+		DonorISPB:      "12345678",                    // TODO: Get from request
+		ClaimerAccount: "123456",                      // TODO: Get from request
+		RequestedBy:    "user@example.com",            // TODO: Get from request
+	}
+
+	// Start ClaimWorkflow
+	workflowID := fmt.Sprintf("claim-%s", claimID)
+	workflowOptions := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: "dict-task-queue",
+	}
+
+	we, err := s.temporalClient.ExecuteWorkflow(ctx, workflowOptions, workflows.ClaimWorkflow, workflowInput)
+	if err != nil {
+		s.logger.Errorf("Failed to start ClaimWorkflow: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to start claim workflow: %v", err)
+	}
+
+	s.logger.Infof("ClaimWorkflow started: workflow_id=%s, run_id=%s", we.GetID(), we.GetRunID())
+
+	return map[string]interface{}{
+		"claim_id":    claimID,
+		"workflow_id": we.GetID(),
+		"run_id":      we.GetRunID(),
+		"status":      "PENDING",
+		"message":     "Claim created successfully - waiting for donor confirmation (30 days)",
+	}, nil
+}
+
+// ConfirmClaim handles the ConfirmClaim RPC call
+// This signals the ClaimWorkflow to confirm the claim
+func (s *Server) ConfirmClaim(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("ConfirmClaim called")
+
+	// TODO: Parse request to get claim_id
+
+	claimID := "placeholder-claim-id" // TODO: Get from request
+	workflowID := fmt.Sprintf("claim-%s", claimID)
+
+	// Send "confirm" signal to ClaimWorkflow
+	err := s.temporalClient.SignalWorkflow(ctx, workflowID, "", "confirm", map[string]interface{}{
+		"confirmed_by": "donor",
+		"confirmed_at": "2025-10-26T00:00:00Z",
+	})
+	if err != nil {
+		s.logger.Errorf("Failed to send confirm signal: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to confirm claim: %v", err)
+	}
+
+	s.logger.Infof("Confirm signal sent to workflow: %s", workflowID)
+
+	return map[string]interface{}{
+		"claim_id": claimID,
+		"status":   "CONFIRMED",
+		"message":  "Claim confirmed successfully",
+	}, nil
+}
+
+// CancelClaim handles the CancelClaim RPC call
+// This signals the ClaimWorkflow to cancel the claim
+func (s *Server) CancelClaim(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("CancelClaim called")
+
+	// TODO: Parse request to get claim_id and reason
+
+	claimID := "placeholder-claim-id" // TODO: Get from request
+	reason := "Requested by claimer"  // TODO: Get from request
+	workflowID := fmt.Sprintf("claim-%s", claimID)
+
+	// Send "cancel" signal to ClaimWorkflow
+	err := s.temporalClient.SignalWorkflow(ctx, workflowID, "", "cancel", map[string]interface{}{
+		"reason":       reason,
+		"cancelled_by": "claimer",
+	})
+	if err != nil {
+		s.logger.Errorf("Failed to send cancel signal: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to cancel claim: %v", err)
+	}
+
+	s.logger.Infof("Cancel signal sent to workflow: %s", workflowID)
+
+	return map[string]interface{}{
+		"claim_id": claimID,
+		"status":   "CANCELLED",
+		"reason":   reason,
+		"message":  "Claim cancelled successfully",
+	}, nil
+}
+
+// GetClaimStatus handles the GetClaimStatus RPC call
+// This queries the workflow status without blocking
+func (s *Server) GetClaimStatus(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("GetClaimStatus called")
+
+	// TODO: Parse request to get claim_id
+	claimID := "placeholder-claim-id" // TODO: Get from request
+	workflowID := fmt.Sprintf("claim-%s", claimID)
+
+	// Query workflow status
+	workflowRun := s.temporalClient.GetWorkflow(ctx, workflowID, "")
+
+	// Check if workflow is still running
+	var result workflows.ClaimWorkflowResult
+	err := workflowRun.Get(ctx, &result)
+
+	if err != nil {
+		// Workflow still running or error
+		s.logger.Infof("Workflow %s is still running or error: %v", workflowID, err)
+
+		return map[string]interface{}{
+			"claim_id":    claimID,
+			"workflow_id": workflowID,
+			"status":      "PENDING",
+			"message":     "Claim is being processed",
+		}, nil
+	}
+
+	// Workflow completed
+	s.logger.Infof("Workflow %s completed with status: %s", workflowID, result.Status)
+
+	return map[string]interface{}{
+		"claim_id":     claimID,
+		"workflow_id":  workflowID,
+		"status":       result.Status,
+		"completed_at": result.CompletedAt,
+		"cancelled_at": result.CancelledAt,
+		"expired_at":   result.ExpiredAt,
+		"reason":       result.Reason,
+		"message":      result.Message,
+	}, nil
+}
+
+// ListClaims handles the ListClaims RPC call
+// This lists all claims for a given entry or ISPB
+func (s *Server) ListClaims(ctx context.Context, req interface{}) (interface{}, error) {
+	s.logger.Infof("ListClaims called")
+
+	// TODO: Parse request to get filters (entry_id, ispb, status)
+	// TODO: Query database for claims
+	// TODO: Return paginated results
+
+	// Placeholder response
+	claims := []map[string]interface{}{
+		{
+			"claim_id":   "claim-001",
+			"entry_id":   "entry-001",
+			"status":     "PENDING",
+			"created_at": "2025-10-26T00:00:00Z",
+		},
+		{
+			"claim_id":   "claim-002",
+			"entry_id":   "entry-002",
+			"status":     "COMPLETED",
+			"created_at": "2025-10-25T00:00:00Z",
+			"completed_at": "2025-10-26T00:00:00Z",
+		},
+	}
+
+	return map[string]interface{}{
+		"claims":      claims,
+		"total_count": len(claims),
+		"page":        1,
+		"page_size":   10,
+	}, nil
+}

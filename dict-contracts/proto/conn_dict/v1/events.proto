@@ -1,0 +1,373 @@
+syntax = "proto3";
+
+package dict.connect.v1;
+
+option go_package = "github.com/lbpay-lab/dict-contracts/gen/proto/connect/v1;connectv1";
+
+import "proto/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// ====================================================================
+// PULSAR EVENTS - Core DICT ↔ Connect (Async via Pulsar)
+// ====================================================================
+// Este arquivo define os schemas de eventos Pulsar para comunicação
+// assíncrona entre Core DICT e Connect.
+//
+// IMPORTANTE: Operações de escrita (Create/Update/Delete) são assíncronas
+// via Pulsar. Operações de leitura (Get/List) são síncronas via gRPC.
+// ====================================================================
+
+// ====================================================================
+// INPUT EVENTS - Core DICT → Connect
+// ====================================================================
+// Topics: dict.entries.created, dict.entries.updated, dict.entries.deleted.immediate
+// ====================================================================
+
+// EntryCreatedEvent - Core DICT publica quando usuário cria nova chave PIX
+// Topic: dict.entries.created
+// Consumer: Connect Pulsar Consumer → chama Bridge.CreateEntry via gRPC
+// Flow: Core DICT → Pulsar → Connect → Bridge → Bacen DICT
+message EntryCreatedEvent {
+  // ID da entry criada (UUID)
+  string entry_id = 1;
+
+  // Participant ISPB (owner)
+  string participant_ispb = 2;
+
+  // Chave DICT criada
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Conta vinculada
+  dict.common.v1.Account account = 5;
+
+  // Idempotency key (para retry safety)
+  string idempotency_key = 6;
+
+  // Request ID (rastreamento)
+  string request_id = 7;
+
+  // User ID (quem criou)
+  string user_id = 8;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 9;
+
+  // Metadata
+  map<string, string> metadata = 10;
+}
+
+// EntryUpdatedEvent - Core DICT publica quando conta vinculada é atualizada
+// Topic: dict.entries.updated
+// Consumer: Connect Pulsar Consumer → chama Bridge.UpdateEntry via gRPC
+// Flow: Core DICT → Pulsar → Connect → Bridge → Bacen DICT
+message EntryUpdatedEvent {
+  // ID da entry atualizada
+  string entry_id = 1;
+
+  // Participant ISPB
+  string participant_ispb = 2;
+
+  // Chave DICT (imutável, apenas para referência)
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Nova conta (campos atualizados)
+  dict.common.v1.Account new_account = 5;
+
+  // Idempotency key
+  string idempotency_key = 6;
+
+  // Request ID
+  string request_id = 7;
+
+  // User ID (quem atualizou)
+  string user_id = 8;
+
+  // Timestamp de atualização
+  google.protobuf.Timestamp updated_at = 9;
+
+  // Metadata
+  map<string, string> metadata = 10;
+}
+
+// EntryDeletedEvent - Core DICT publica quando usuário deleta chave PIX
+// Topic: dict.entries.deleted.immediate
+// Consumer: Connect Pulsar Consumer → chama Bridge.DeleteEntry via gRPC
+// Flow: Core DICT → Pulsar → Connect → Bridge → Bacen DICT
+message EntryDeletedEvent {
+  // ID da entry deletada
+  string entry_id = 1;
+
+  // Participant ISPB
+  string participant_ispb = 2;
+
+  // Chave DICT deletada
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Tipo de deleção
+  enum DeletionType {
+    DELETION_TYPE_UNSPECIFIED = 0;
+    DELETION_TYPE_IMMEDIATE = 1;     // Deleção imediata (< 2s)
+    DELETION_TYPE_WAITING_PERIOD = 2; // Soft delete com 30 dias de espera
+  }
+  DeletionType deletion_type = 5;
+
+  // Idempotency key
+  string idempotency_key = 6;
+
+  // Request ID
+  string request_id = 7;
+
+  // User ID (quem deletou)
+  string user_id = 8;
+
+  // Timestamp de deleção
+  google.protobuf.Timestamp deleted_at = 9;
+
+  // Metadata
+  map<string, string> metadata = 10;
+}
+
+// ====================================================================
+// OUTPUT EVENTS - Connect → Core DICT
+// ====================================================================
+// Topics: dict.entries.status.changed, dict.claims.created, dict.claims.completed
+// ====================================================================
+
+// EntryStatusChangedEvent - Connect publica quando status da entry muda
+// Topic: dict.entries.status.changed
+// Consumer: Core DICT Pulsar Consumer → atualiza DB local
+// Flow: Connect → Pulsar → Core DICT
+// Casos:
+//   - Entry criada no Bacen com sucesso (PENDING → ACTIVE)
+//   - Entry criada no Bacen com erro (PENDING → FAILED)
+//   - Entry deletada no Bacen (ACTIVE → DELETED)
+//   - Entry sob claim (ACTIVE → CLAIM_PENDING)
+message EntryStatusChangedEvent {
+  // ID da entry
+  string entry_id = 1;
+
+  // Participant ISPB
+  string participant_ispb = 2;
+
+  // Chave DICT
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Status anterior
+  dict.common.v1.EntryStatus old_status = 5;
+
+  // Novo status
+  dict.common.v1.EntryStatus new_status = 6;
+
+  // Razão da mudança de status
+  string reason = 7;
+
+  // ID da operação que causou a mudança (entry_id, claim_id, etc)
+  string caused_by_id = 8;
+
+  // Tipo da operação que causou a mudança
+  enum CausedByType {
+    CAUSED_BY_TYPE_UNSPECIFIED = 0;
+    CAUSED_BY_TYPE_CREATION = 1;
+    CAUSED_BY_TYPE_UPDATE = 2;
+    CAUSED_BY_TYPE_DELETION = 3;
+    CAUSED_BY_TYPE_CLAIM = 4;
+    CAUSED_BY_TYPE_PORTABILITY = 5;
+    CAUSED_BY_TYPE_INFRACTION = 6;
+  }
+  CausedByType caused_by_type = 9;
+
+  // Timestamp da mudança
+  google.protobuf.Timestamp changed_at = 10;
+
+  // Erro (se new_status = FAILED)
+  optional string error = 11;
+
+  // Metadata
+  map<string, string> metadata = 12;
+}
+
+// ClaimCreatedEvent - Connect publica quando claim é criada com sucesso
+// Topic: dict.claims.created
+// Consumer: Core DICT Pulsar Consumer → atualiza DB local, notifica usuários
+// Flow: Connect → Pulsar → Core DICT
+message ClaimCreatedEvent {
+  // ID da claim criada
+  string claim_id = 1;
+
+  // ID da entry reivindicada
+  string entry_id = 2;
+
+  // Chave reivindicada
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // ISPBs
+  string claimer_ispb = 5;  // Quem está reivindicando
+  string owner_ispb = 6;    // Dono atual
+
+  // Conta do reivindicador
+  dict.common.v1.Account claimer_account = 7;
+
+  // Tipo de claim
+  enum ClaimType {
+    CLAIM_TYPE_UNSPECIFIED = 0;
+    CLAIM_TYPE_OWNERSHIP = 1;
+    CLAIM_TYPE_PORTABILITY = 2;
+  }
+  ClaimType claim_type = 8;
+
+  // Status (sempre OPEN ao criar)
+  dict.common.v1.ClaimStatus status = 9;
+
+  // Data de expiração (created_at + 30 dias)
+  google.protobuf.Timestamp expires_at = 10;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 11;
+
+  // Metadata
+  map<string, string> metadata = 12;
+}
+
+// ClaimCompletedEvent - Connect publica quando claim é concluída (CONFIRMED, CANCELLED, EXPIRED)
+// Topic: dict.claims.completed
+// Consumer: Core DICT Pulsar Consumer → atualiza DB local, atualiza ownership se CONFIRMED
+// Flow: Connect → Pulsar → Core DICT
+message ClaimCompletedEvent {
+  // ID da claim
+  string claim_id = 1;
+
+  // ID da entry
+  string entry_id = 2;
+
+  // Chave
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // ISPBs
+  string claimer_ispb = 5;
+  string owner_ispb = 6;
+
+  // Status final
+  dict.common.v1.ClaimStatus final_status = 7;  // CONFIRMED, CANCELLED, ou EXPIRED
+
+  // Razão da conclusão
+  string reason = 8;
+
+  // Entry atualizado (se final_status = CONFIRMED)
+  // Agora pertence ao claimer
+  optional dict.common.v1.Account new_account = 9;
+
+  // Timestamp de conclusão
+  google.protobuf.Timestamp completed_at = 10;
+
+  // Metadata
+  map<string, string> metadata = 11;
+}
+
+// InfractionReportedEvent - Connect publica quando infração é reportada
+// Topic: dict.infractions.reported
+// Consumer: Core DICT Pulsar Consumer → atualiza DB local, notifica compliance
+// Flow: Connect → Pulsar → Core DICT
+message InfractionReportedEvent {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Chave sob infração
+  dict.common.v1.KeyType key_type = 2;
+  string key_value = 3;
+
+  // ISPB do participante sob infração
+  string participant_ispb = 4;
+
+  // Tipo de infração
+  enum InfractionType {
+    INFRACTION_TYPE_UNSPECIFIED = 0;
+    INFRACTION_TYPE_FRAUD = 1;
+    INFRACTION_TYPE_ACCOUNT_CLOSED = 2;
+    INFRACTION_TYPE_INVALID_ACCOUNT = 3;
+    INFRACTION_TYPE_DUPLICATE_KEY = 4;
+    INFRACTION_TYPE_INCORRECT_OWNERSHIP = 5;
+  }
+  InfractionType infraction_type = 5;
+
+  // Descrição da infração
+  string description = 6;
+
+  // ISPB do reportador
+  string reporter_ispb = 7;
+
+  // Status (sempre REPORTED ao criar)
+  enum InfractionStatus {
+    INFRACTION_STATUS_UNSPECIFIED = 0;
+    INFRACTION_STATUS_REPORTED = 1;
+    INFRACTION_STATUS_UNDER_INVESTIGATION = 2;
+    INFRACTION_STATUS_RESOLVED = 3;
+    INFRACTION_STATUS_DISMISSED = 4;
+  }
+  InfractionStatus status = 8;
+
+  // Timestamp do report
+  google.protobuf.Timestamp reported_at = 9;
+
+  // Metadata
+  map<string, string> metadata = 10;
+}
+
+// InfractionResolvedEvent - Connect publica quando infração é resolvida ou descartada
+// Topic: dict.infractions.resolved
+// Consumer: Core DICT Pulsar Consumer → atualiza DB local, notifica participante
+// Flow: Connect → Pulsar → Core DICT
+message InfractionResolvedEvent {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Chave sob infração
+  dict.common.v1.KeyType key_type = 2;
+  string key_value = 3;
+
+  // ISPB do participante
+  string participant_ispb = 4;
+
+  // Status final
+  enum InfractionStatus {
+    INFRACTION_STATUS_UNSPECIFIED = 0;
+    INFRACTION_STATUS_REPORTED = 1;
+    INFRACTION_STATUS_UNDER_INVESTIGATION = 2;
+    INFRACTION_STATUS_RESOLVED = 3;
+    INFRACTION_STATUS_DISMISSED = 4;
+  }
+  InfractionStatus final_status = 5;  // RESOLVED ou DISMISSED
+
+  // Resolução aplicada (se RESOLVED)
+  optional string resolution = 6;
+
+  // Razão do descarte (se DISMISSED)
+  optional string dismissal_reason = 7;
+
+  // Timestamp da resolução
+  google.protobuf.Timestamp resolved_at = 8;
+
+  // Metadata
+  map<string, string> metadata = 9;
+}
+
+// ====================================================================
+// PULSAR TOPICS SUMMARY
+// ====================================================================
+// Core DICT → Connect (Input):
+//   - dict.entries.created          → EntryCreatedEvent
+//   - dict.entries.updated          → EntryUpdatedEvent
+//   - dict.entries.deleted.immediate → EntryDeletedEvent
+//
+// Connect → Core DICT (Output):
+//   - dict.entries.status.changed   → EntryStatusChangedEvent
+//   - dict.claims.created           → ClaimCreatedEvent
+//   - dict.claims.completed         → ClaimCompletedEvent
+//   - dict.infractions.reported     → InfractionReportedEvent
+//   - dict.infractions.resolved     → InfractionResolvedEvent
+// ====================================================================

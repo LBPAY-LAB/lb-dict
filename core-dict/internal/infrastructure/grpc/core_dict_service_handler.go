@@ -1,0 +1,1007 @@
+package grpc
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	corev1 "github.com/lbpay-lab/dict-contracts/gen/proto/core/v1"
+	commonv1 "github.com/lbpay-lab/dict-contracts/gen/proto/common/v1"
+
+	"github.com/lbpay-lab/core-dict/internal/application/commands"
+	"github.com/lbpay-lab/core-dict/internal/application/queries"
+	// "github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/infrastructure/grpc/mappers"
+)
+
+// CoreDictServiceHandler implements the CoreDictService gRPC service
+// This is a unified handler that implements ALL RPCs from the CoreDictService
+//
+// FEATURE FLAG: useMockMode controls whether to return mock responses (for Front-End testing)
+// or execute real business logic through Application Layer handlers.
+type CoreDictServiceHandler struct {
+	corev1.UnimplementedCoreDictServiceServer
+
+	// ========== Feature Flag ==========
+	// useMockMode = true  -> Returns mock responses (for Front-End integration testing)
+	// useMockMode = false -> Executes real business logic via Application Layer
+	useMockMode bool
+
+	// ========== Command Handlers (Write Operations) ==========
+	createEntryCmd   *commands.CreateEntryCommandHandler
+	updateEntryCmd   *commands.UpdateEntryCommandHandler
+	deleteEntryCmd   *commands.DeleteEntryCommandHandler
+	blockEntryCmd    *commands.BlockEntryCommandHandler
+	unblockEntryCmd  *commands.UnblockEntryCommandHandler
+	createClaimCmd   *commands.CreateClaimCommandHandler
+	confirmClaimCmd  *commands.ConfirmClaimCommandHandler
+	cancelClaimCmd   *commands.CancelClaimCommandHandler
+	completeClaimCmd *commands.CompleteClaimCommandHandler
+
+	// ========== Query Handlers (Read Operations) ==========
+	getEntryQuery       *queries.GetEntryQueryHandler
+	listEntriesQuery    *queries.ListEntriesQueryHandler
+	getClaimQuery       *queries.GetClaimQueryHandler
+	listClaimsQuery     *queries.ListClaimsQueryHandler
+	getAccountQuery     *queries.GetAccountQueryHandler
+	verifyAccountQuery  *queries.VerifyAccountQueryHandler
+	healthCheckQuery    *queries.HealthCheckQueryHandler
+	getStatisticsQuery  *queries.GetStatisticsQueryHandler
+	listInfractionsQuery *queries.ListInfractionsQueryHandler
+	getAuditLogQuery    *queries.GetAuditLogQueryHandler
+
+	// ========== Logger ==========
+	logger *slog.Logger
+}
+
+// NewCoreDictServiceHandler creates a new CoreDictServiceHandler with full dependency injection
+//
+// Parameters:
+//   - useMockMode: Feature flag to toggle between mock and real implementations
+//   - Command handlers: All command handlers for write operations
+//   - Query handlers: All query handlers for read operations
+//   - logger: Structured logger
+func NewCoreDictServiceHandler(
+	useMockMode bool,
+	// Commands
+	createEntryCmd *commands.CreateEntryCommandHandler,
+	updateEntryCmd *commands.UpdateEntryCommandHandler,
+	deleteEntryCmd *commands.DeleteEntryCommandHandler,
+	blockEntryCmd *commands.BlockEntryCommandHandler,
+	unblockEntryCmd *commands.UnblockEntryCommandHandler,
+	createClaimCmd *commands.CreateClaimCommandHandler,
+	confirmClaimCmd *commands.ConfirmClaimCommandHandler,
+	cancelClaimCmd *commands.CancelClaimCommandHandler,
+	completeClaimCmd *commands.CompleteClaimCommandHandler,
+	// Queries
+	getEntryQuery *queries.GetEntryQueryHandler,
+	listEntriesQuery *queries.ListEntriesQueryHandler,
+	getClaimQuery *queries.GetClaimQueryHandler,
+	listClaimsQuery *queries.ListClaimsQueryHandler,
+	getAccountQuery *queries.GetAccountQueryHandler,
+	verifyAccountQuery *queries.VerifyAccountQueryHandler,
+	healthCheckQuery *queries.HealthCheckQueryHandler,
+	getStatisticsQuery *queries.GetStatisticsQueryHandler,
+	listInfractionsQuery *queries.ListInfractionsQueryHandler,
+	getAuditLogQuery *queries.GetAuditLogQueryHandler,
+	// Logger
+	logger *slog.Logger,
+) *CoreDictServiceHandler {
+	return &CoreDictServiceHandler{
+		useMockMode:          useMockMode,
+		createEntryCmd:       createEntryCmd,
+		updateEntryCmd:       updateEntryCmd,
+		deleteEntryCmd:       deleteEntryCmd,
+		blockEntryCmd:        blockEntryCmd,
+		unblockEntryCmd:      unblockEntryCmd,
+		createClaimCmd:       createClaimCmd,
+		confirmClaimCmd:      confirmClaimCmd,
+		cancelClaimCmd:       cancelClaimCmd,
+		completeClaimCmd:     completeClaimCmd,
+		getEntryQuery:        getEntryQuery,
+		listEntriesQuery:     listEntriesQuery,
+		getClaimQuery:        getClaimQuery,
+		listClaimsQuery:      listClaimsQuery,
+		getAccountQuery:      getAccountQuery,
+		verifyAccountQuery:   verifyAccountQuery,
+		healthCheckQuery:     healthCheckQuery,
+		getStatisticsQuery:   getStatisticsQuery,
+		listInfractionsQuery: listInfractionsQuery,
+		getAuditLogQuery:     getAuditLogQuery,
+		logger:               logger,
+	}
+}
+
+// ========================================================================
+// KEY OPERATIONS (Entry Management)
+// ========================================================================
+
+// CreateKey creates a new PIX key for the authenticated user
+//
+// HYBRID MODE:
+// - MOCK MODE (useMockMode=true): Returns mock response for Front-End testing
+// - REAL MODE (useMockMode=false): Executes business logic via CreateEntryCommandHandler
+func (h *CoreDictServiceHandler) CreateKey(ctx context.Context, req *corev1.CreateKeyRequest) (*corev1.CreateKeyResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetKeyType() == commonv1.KeyType_KEY_TYPE_UNSPECIFIED {
+		return nil, status.Error(codes.InvalidArgument, "key_type is required")
+	}
+
+	// For EVP keys, key_value can be empty (will be generated)
+	if req.GetKeyType() != commonv1.KeyType_KEY_TYPE_EVP && req.GetKeyValue() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_value is required for non-EVP keys")
+	}
+
+	if req.GetAccountId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("CreateKey: MOCK MODE", "key_type", req.GetKeyType(), "key_value", req.GetKeyValue())
+		now := time.Now()
+		return &corev1.CreateKeyResponse{
+			KeyId: fmt.Sprintf("mock-key-%d", now.Unix()),
+			Key: &commonv1.DictKey{
+				KeyType:  req.GetKeyType(),
+				KeyValue: req.GetKeyValue(),
+			},
+			Status:    commonv1.EntryStatus_ENTRY_STATUS_ACTIVE,
+			CreatedAt: timestamppb.New(now),
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	h.logger.Info("CreateKey: REAL MODE", "key_type", req.GetKeyType(), "key_value", req.GetKeyValue())
+
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		h.logger.Warn("CreateKey: user not authenticated")
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Map proto request → domain command
+	cmd, err := mappers.MapProtoCreateKeyRequestToCommand(req, userID)
+	if err != nil {
+		h.logger.Error("CreateKey: mapping failed", "error", err, "user_id", userID)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// 3c. Execute command handler
+	result, err := h.createEntryCmd.Handle(ctx, cmd)
+	if err != nil {
+		h.logger.Error("CreateKey: command failed", "error", err, "user_id", userID)
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("CreateKey: success", "entry_id", result.EntryID, "user_id", userID)
+	return &corev1.CreateKeyResponse{
+		KeyId: result.EntryID.String(),
+		Key: &commonv1.DictKey{
+			KeyType:  req.GetKeyType(),
+			KeyValue: req.GetKeyValue(),
+		},
+		Status:    mappers.MapStringStatusToProto(result.Status),
+		CreatedAt: timestamppb.New(result.CreatedAt),
+	}, nil
+}
+
+// ListKeys lists all PIX keys for the authenticated user
+func (h *CoreDictServiceHandler) ListKeys(ctx context.Context, req *corev1.ListKeysRequest) (*corev1.ListKeysResponse, error) {
+	// ========== 1. VALIDATION (always) ==========
+	pageSize := req.GetPageSize()
+	if pageSize == 0 {
+		pageSize = 20 // Default page size
+	}
+	if pageSize > 100 {
+		pageSize = 100 // Max page size
+	}
+
+	// ========== 2. MOCK MODE ==========
+	if h.useMockMode {
+		h.logger.Info("ListKeys: MOCK MODE")
+		return &corev1.ListKeysResponse{
+			Keys: []*corev1.KeySummary{
+				{
+					KeyId: "key-1",
+					Key: &commonv1.DictKey{
+						KeyType:  commonv1.KeyType_KEY_TYPE_CPF,
+						KeyValue: "12345678900",
+					},
+					Status:    commonv1.EntryStatus_ENTRY_STATUS_ACTIVE,
+					AccountId: "mock-account-id",
+					CreatedAt: timestamppb.Now(),
+					UpdatedAt: timestamppb.Now(),
+				},
+			},
+			NextPageToken: "",
+			TotalCount:    1,
+		}, nil
+	}
+
+	// ========== 3. REAL MODE ==========
+	h.logger.Info("ListKeys: REAL MODE", "page_size", pageSize)
+
+	// 3a. Extract user_id from context (needed to get account_id)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		h.logger.Warn("ListKeys: user not authenticated")
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// Note: For now we'll use userID as accountID (they may be different in production)
+	// In production, you'd query accounts by userID to get the accountID
+	accountID := userID
+
+	// 3b. Map proto request → domain query
+	query, err := mappers.MapProtoListKeysRequestToQuery(req, accountID)
+	if err != nil {
+		h.logger.Error("ListKeys: mapping failed", "error", err, "user_id", userID)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// 3c. Execute query handler
+	result, err := h.listEntriesQuery.Handle(ctx, query)
+	if err != nil {
+		h.logger.Error("ListKeys: query failed", "error", err, "user_id", userID)
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3d. Map domain result → proto response
+	keys := make([]*corev1.KeySummary, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		keys = append(keys, mappers.MapDomainEntryToProtoKeySummary(entry))
+	}
+
+	// Calculate next page token (if more pages exist)
+	nextPageToken := ""
+	if result.Page < result.TotalPages {
+		nextPageToken = fmt.Sprintf("page=%d", result.Page+1)
+	}
+
+	h.logger.Info("ListKeys: success", "count", len(keys), "total", result.TotalCount, "user_id", userID)
+	return &corev1.ListKeysResponse{
+		Keys:          keys,
+		NextPageToken: nextPageToken,
+		TotalCount:    int32(result.TotalCount),
+	}, nil
+}
+
+// GetKey retrieves details of a specific PIX key
+func (h *CoreDictServiceHandler) GetKey(ctx context.Context, req *corev1.GetKeyRequest) (*corev1.GetKeyResponse, error) {
+	// 1. Validate request - must have either key_id or key
+	if req.GetIdentifier() == nil {
+		return nil, status.Error(codes.InvalidArgument, "identifier is required (key_id or key)")
+	}
+
+	// TODO: Extract user_id from context
+	// userID := ctx.Value("user_id").(string)
+
+	var keyID string
+	switch id := req.GetIdentifier().(type) {
+	case *corev1.GetKeyRequest_KeyId:
+		keyID = id.KeyId
+	case *corev1.GetKeyRequest_Key:
+		// TODO: Lookup key by value
+		keyID = "key-from-lookup"
+	default:
+		return nil, status.Error(codes.InvalidArgument, "invalid identifier type")
+	}
+
+	// TODO: Execute query handler
+	// result, err := h.getEntryQuery.Handle(ctx, keyID)
+	// if err != nil {
+	//     return nil, mapDomainError(err)
+	// }
+
+	// Mock response
+	now := time.Now()
+	return &corev1.GetKeyResponse{
+		KeyId: keyID,
+		Key: &commonv1.DictKey{
+			KeyType:  commonv1.KeyType_KEY_TYPE_CPF,
+			KeyValue: "12345678900",
+		},
+		Account: &commonv1.Account{
+			Ispb:          "12345678",
+			BranchCode:    "0001",
+			AccountNumber: "123456",
+			AccountType:   commonv1.AccountType_ACCOUNT_TYPE_SAVINGS,
+		},
+		Status:    commonv1.EntryStatus_ENTRY_STATUS_ACTIVE,
+		CreatedAt: timestamppb.New(now),
+		UpdatedAt: timestamppb.New(now),
+	}, nil
+}
+
+// DeleteKey deletes a PIX key
+func (h *CoreDictServiceHandler) DeleteKey(ctx context.Context, req *corev1.DeleteKeyRequest) (*corev1.DeleteKeyResponse, error) {
+	// 1. Validate request
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+
+	// TODO: Extract user_id from context
+	// userID := ctx.Value("user_id").(string)
+
+	// TODO: Verify ownership
+	// Ensure the key belongs to the authenticated user
+
+	// TODO: Execute command handler
+	// err := h.deleteEntryCmd.Handle(ctx, req.GetKeyId())
+	// if err != nil {
+	//     return nil, mapDomainError(err)
+	// }
+
+	return &corev1.DeleteKeyResponse{
+		Deleted:   true,
+		DeletedAt: timestamppb.Now(),
+	}, nil
+}
+
+// ========================================================================
+// CLAIM OPERATIONS (30-day ownership claims)
+// ========================================================================
+
+// StartClaim initiates a claim for a PIX key owned by another user
+func (h *CoreDictServiceHandler) StartClaim(ctx context.Context, req *corev1.StartClaimRequest) (*corev1.StartClaimResponse, error) {
+	// 1. Validate request
+	if req.GetKey() == nil {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+	if req.GetAccountId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "account_id is required")
+	}
+
+	// TODO: Execute claim creation command
+	now := time.Now()
+	expiresAt := now.Add(30 * 24 * time.Hour) // 30 days
+
+	return &corev1.StartClaimResponse{
+		ClaimId:   fmt.Sprintf("claim-%d", now.Unix()),
+		EntryId:   "entry-123",
+		Status:    commonv1.ClaimStatus_CLAIM_STATUS_OPEN,
+		ExpiresAt: timestamppb.New(expiresAt),
+		CreatedAt: timestamppb.New(now),
+		Message:   "Claim created. The current owner has 30 days to respond",
+	}, nil
+}
+
+// GetClaimStatus retrieves the current status of a claim
+func (h *CoreDictServiceHandler) GetClaimStatus(ctx context.Context, req *corev1.GetClaimStatusRequest) (*corev1.GetClaimStatusResponse, error) {
+	if req.GetClaimId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "claim_id is required")
+	}
+
+	// TODO: Execute query handler
+	now := time.Now()
+	expiresAt := now.Add(29 * 24 * time.Hour)
+
+	return &corev1.GetClaimStatusResponse{
+		ClaimId:   req.GetClaimId(),
+		EntryId:   "entry-123",
+		Key: &commonv1.DictKey{
+			KeyType:  commonv1.KeyType_KEY_TYPE_CPF,
+			KeyValue: "12345678900",
+		},
+		Status:         commonv1.ClaimStatus_CLAIM_STATUS_OPEN,
+		ClaimerIspb:    "87654321",
+		OwnerIspb:      "12345678",
+		CreatedAt:      timestamppb.New(now.Add(-24 * time.Hour)),
+		ExpiresAt:      timestamppb.New(expiresAt),
+		DaysRemaining:  29,
+	}, nil
+}
+
+// ListIncomingClaims lists claims received by the authenticated user (where user is the current owner)
+func (h *CoreDictServiceHandler) ListIncomingClaims(ctx context.Context, req *corev1.ListIncomingClaimsRequest) (*corev1.ListIncomingClaimsResponse, error) {
+	pageSize := req.GetPageSize()
+	if pageSize == 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	// TODO: Execute query handler
+	return &corev1.ListIncomingClaimsResponse{
+		Claims: []*corev1.ClaimSummary{
+			{
+				ClaimId: "claim-1",
+				EntryId: "entry-123",
+				Key: &commonv1.DictKey{
+					KeyType:  commonv1.KeyType_KEY_TYPE_EMAIL,
+					KeyValue: "user@example.com",
+				},
+				Status:        commonv1.ClaimStatus_CLAIM_STATUS_OPEN,
+				CreatedAt:     timestamppb.Now(),
+				ExpiresAt:     timestamppb.New(time.Now().Add(30 * 24 * time.Hour)),
+				DaysRemaining: 30,
+			},
+		},
+		NextPageToken: "",
+		TotalCount:    1,
+	}, nil
+}
+
+// ListOutgoingClaims lists claims sent by the authenticated user (where user is the claimer)
+func (h *CoreDictServiceHandler) ListOutgoingClaims(ctx context.Context, req *corev1.ListOutgoingClaimsRequest) (*corev1.ListOutgoingClaimsResponse, error) {
+	pageSize := req.GetPageSize()
+	if pageSize == 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	// TODO: Execute query handler
+	return &corev1.ListOutgoingClaimsResponse{
+		Claims: []*corev1.ClaimSummary{
+			{
+				ClaimId: "claim-2",
+				EntryId: "entry-456",
+				Key: &commonv1.DictKey{
+					KeyType:  commonv1.KeyType_KEY_TYPE_PHONE,
+					KeyValue: "+5511999999999",
+				},
+				Status:        commonv1.ClaimStatus_CLAIM_STATUS_OPEN,
+				CreatedAt:     timestamppb.Now(),
+				ExpiresAt:     timestamppb.New(time.Now().Add(29 * 24 * time.Hour)),
+				DaysRemaining: 29,
+			},
+		},
+		NextPageToken: "",
+		TotalCount:    1,
+	}, nil
+}
+
+// RespondToClaim allows the current owner to accept or reject a claim
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes business logic via ConfirmClaimCommandHandler or CancelClaimCommandHandler
+func (h *CoreDictServiceHandler) RespondToClaim(ctx context.Context, req *corev1.RespondToClaimRequest) (*corev1.RespondToClaimResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetClaimId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "claim_id is required")
+	}
+
+	if req.GetResponse() == corev1.RespondToClaimRequest_CLAIM_RESPONSE_UNSPECIFIED {
+		return nil, status.Error(codes.InvalidArgument, "response is required (ACCEPT or REJECT)")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("RespondToClaim: MOCK MODE", "claim_id", req.GetClaimId(), "response", req.GetResponse())
+
+		var newStatus commonv1.ClaimStatus
+		var message string
+
+		switch req.GetResponse() {
+		case corev1.RespondToClaimRequest_CLAIM_RESPONSE_ACCEPT:
+			newStatus = commonv1.ClaimStatus_CLAIM_STATUS_CONFIRMED
+			message = "Claim accepted successfully. Key will be transferred."
+		case corev1.RespondToClaimRequest_CLAIM_RESPONSE_REJECT:
+			newStatus = commonv1.ClaimStatus_CLAIM_STATUS_CANCELLED
+			message = "Claim rejected. Key remains with current owner."
+		}
+
+		return &corev1.RespondToClaimResponse{
+			ClaimId:     req.GetClaimId(),
+			NewStatus:   newStatus,
+			RespondedAt: timestamppb.Now(),
+			Message:     message,
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("RespondToClaim: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("RespondToClaim: REAL MODE", "claim_id", req.GetClaimId(), "response", req.GetResponse())
+	//
+	// // 3a. Extract user_id from context (set by auth interceptor)
+	// userID, ok := ctx.Value("user_id").(string)
+	// if !ok || userID == "" {
+	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	// }
+	//
+	// // 3b. Map proto request → domain command based on response type
+	// var claim *entities.Claim
+	// var err error
+	//
+	// switch req.GetResponse() {
+	// case corev1.RespondToClaimRequest_CLAIM_RESPONSE_ACCEPT:
+	// 	// Accept claim: Map to ConfirmClaimCommand
+	// 	cmd, mapErr := mappers.MapProtoRespondToClaimRequestToConfirmCommand(req, userID)
+	// 	if mapErr != nil {
+	// 		h.logger.Error("RespondToClaim: mapping to ConfirmCommand failed", "error", mapErr, "user_id", userID)
+	// 		return nil, status.Error(codes.InvalidArgument, mapErr.Error())
+	// 	}
+	//
+	// 	// 3c. Execute ConfirmClaimCommandHandler
+	// 	claim, err = h.confirmClaimCmd.Handle(ctx, cmd)
+	// 	if err != nil {
+	// 		h.logger.Error("RespondToClaim: ConfirmClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+	// 		return nil, mappers.MapDomainErrorToGRPC(err)
+	// 	}
+	//
+	// case corev1.RespondToClaimRequest_CLAIM_RESPONSE_REJECT:
+	// 	// Reject claim: Map to CancelClaimCommand
+	// 	cmd, mapErr := mappers.MapProtoRespondToClaimRequestToCancelCommand(req, userID)
+	// 	if mapErr != nil {
+	// 		h.logger.Error("RespondToClaim: mapping to CancelCommand failed", "error", mapErr, "user_id", userID)
+	// 		return nil, status.Error(codes.InvalidArgument, mapErr.Error())
+	// 	}
+	//
+	// 	// 3c. Execute CancelClaimCommandHandler
+	// 	claim, err = h.cancelClaimCmd.Handle(ctx, cmd)
+	// 	if err != nil {
+	// 		h.logger.Error("RespondToClaim: CancelClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+	// 		return nil, mappers.MapDomainErrorToGRPC(err)
+	// 	}
+	// }
+	//
+	// // 3d. Map domain result → proto response
+	// h.logger.Info("RespondToClaim: success", "claim_id", claim.ID, "new_status", claim.Status, "user_id", userID)
+	// return mappers.MapDomainClaimToProtoRespondToClaimResponse(claim), nil
+}
+
+// CancelClaim allows the claimer to cancel their own claim
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes business logic via CancelClaimCommandHandler
+func (h *CoreDictServiceHandler) CancelClaim(ctx context.Context, req *corev1.CancelClaimRequest) (*corev1.CancelClaimResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetClaimId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "claim_id is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("CancelClaim: MOCK MODE", "claim_id", req.GetClaimId())
+		return &corev1.CancelClaimResponse{
+			ClaimId:     req.GetClaimId(),
+			Status:      commonv1.ClaimStatus_CLAIM_STATUS_CANCELLED,
+			CancelledAt: timestamppb.Now(),
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("CancelClaim: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("CancelClaim: REAL MODE", "claim_id", req.GetClaimId())
+	//
+	// // 3a. Extract user_id from context (set by auth interceptor)
+	// userID, ok := ctx.Value("user_id").(string)
+	// if !ok || userID == "" {
+	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	// }
+	//
+	// // 3b. Map proto request → domain command
+	// cmd, err := mappers.MapProtoCancelClaimRequestToCommand(req, userID)
+	// if err != nil {
+	// 	h.logger.Error("CancelClaim: mapping failed", "error", err, "user_id", userID)
+	// 	return nil, status.Error(codes.InvalidArgument, err.Error())
+	// }
+	//
+	// // 3c. Execute command handler
+	// claim, err := h.cancelClaimCmd.Handle(ctx, cmd)
+	// if err != nil {
+	// 	h.logger.Error("CancelClaim: command failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+	// 	return nil, mappers.MapDomainErrorToGRPC(err)
+	// }
+	//
+	// // 3d. Map domain result → proto response
+	// h.logger.Info("CancelClaim: success", "claim_id", claim.ID, "status", claim.Status, "user_id", userID)
+	// return &corev1.CancelClaimResponse{
+	// 	ClaimId:     claim.ID.String(),
+	// 	Status:      mappers.MapDomainClaimStatusToProto(claim.Status),
+	// 	CancelledAt: timestamppb.New(claim.UpdatedAt),
+	// }, nil
+}
+
+// ========================================================================
+// PORTABILITY OPERATIONS
+// ========================================================================
+
+// StartPortability initiates portability of a key to a new account
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes business logic via UpdateEntryCommandHandler (portability workflow)
+func (h *CoreDictServiceHandler) StartPortability(ctx context.Context, req *corev1.StartPortabilityRequest) (*corev1.StartPortabilityResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetKeyId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id is required")
+	}
+	if req.GetNewAccountId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "new_account_id is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("StartPortability: MOCK MODE", "key_id", req.GetKeyId(), "new_account_id", req.GetNewAccountId())
+		return &corev1.StartPortabilityResponse{
+			PortabilityId: fmt.Sprintf("port-%d", time.Now().Unix()),
+			KeyId:         req.GetKeyId(),
+			NewAccount: &commonv1.Account{
+				Ispb:          "12345678",
+				BranchCode:    "0002",
+				AccountNumber: "654321",
+				AccountType:   commonv1.AccountType_ACCOUNT_TYPE_CHECKING,
+			},
+			StartedAt: timestamppb.Now(),
+			Message:   "Portability initiated. Awaiting confirmation.",
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("StartPortability: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("StartPortability: REAL MODE", "key_id", req.GetKeyId(), "new_account_id", req.GetNewAccountId())
+	//
+	// // 3a. Extract user_id from context (set by auth interceptor)
+	// userID, ok := ctx.Value("user_id").(string)
+	// if !ok || userID == "" {
+	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	// }
+	//
+	// // 3b. Verify ownership: User must own the key being ported
+	// // TODO: Create mapper MapProtoStartPortabilityRequestToCommand or use UpdateEntryCommand
+	// // For now, use updateEntryCmd with account change inline
+	//
+	// entryID, err := uuid.Parse(req.GetKeyId())
+	// if err != nil {
+	// 	h.logger.Error("StartPortability: invalid key_id", "error", err, "key_id", req.GetKeyId())
+	// 	return nil, status.Error(codes.InvalidArgument, "invalid key_id format")
+	// }
+	//
+	// newAccountID, err := uuid.Parse(req.GetNewAccountId())
+	// if err != nil {
+	// 	h.logger.Error("StartPortability: invalid new_account_id", "error", err, "new_account_id", req.GetNewAccountId())
+	// 	return nil, status.Error(codes.InvalidArgument, "invalid new_account_id format")
+	// }
+	//
+	// requestedBy, err := uuid.Parse(userID)
+	// if err != nil {
+	// 	h.logger.Error("StartPortability: invalid user_id", "error", err, "user_id", userID)
+	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
+	// }
+	//
+	// // TODO: Fetch new account details to populate response
+	// // For now, create UpdateEntryCommand to change entry's AccountID
+	// cmd := commands.UpdateEntryCommand{
+	// 	EntryID:     entryID,
+	// 	AccountID:   newAccountID, // Change account (portability)
+	// 	RequestedBy: requestedBy,
+	// 	// Status: "PORTABILITY_PENDING" (may need to update entry status)
+	// }
+	//
+	// // 3c. Execute command handler
+	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	// if err != nil {
+	// 	h.logger.Error("StartPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "key_id", req.GetKeyId())
+	// 	return nil, mappers.MapDomainErrorToGRPC(err)
+	// }
+	//
+	// // TODO: Create PortabilityHistory record (separate table/entity)
+	// // For now, just return success response
+	//
+	// // 3d. Map domain result → proto response
+	// h.logger.Info("StartPortability: success", "entry_id", entry.ID, "new_account_id", newAccountID, "user_id", userID)
+	// portabilityID := fmt.Sprintf("port-%d", time.Now().Unix()) // TODO: Generate proper UUID
+	//
+	// return &corev1.StartPortabilityResponse{
+	// 	PortabilityId: portabilityID,
+	// 	KeyId:         entry.ID.String(),
+	// 	NewAccount:    nil, // TODO: Fetch account details and map to proto
+	// 	StartedAt:     timestamppb.New(entry.UpdatedAt),
+	// 	Message:       "Portability initiated. Awaiting confirmation.",
+	// }, nil
+}
+
+// ConfirmPortability confirms a portability operation
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes business logic via UpdateEntryCommandHandler (set status to ACTIVE)
+func (h *CoreDictServiceHandler) ConfirmPortability(ctx context.Context, req *corev1.ConfirmPortabilityRequest) (*corev1.ConfirmPortabilityResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetPortabilityId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "portability_id is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("ConfirmPortability: MOCK MODE", "portability_id", req.GetPortabilityId())
+		return &corev1.ConfirmPortabilityResponse{
+			PortabilityId: req.GetPortabilityId(),
+			KeyId:         "key-123",
+			Status:        commonv1.EntryStatus_ENTRY_STATUS_ACTIVE,
+			ConfirmedAt:   timestamppb.Now(),
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("ConfirmPortability: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("ConfirmPortability: REAL MODE", "portability_id", req.GetPortabilityId())
+	//
+	// // 3a. Extract user_id from context (set by auth interceptor)
+	// userID, ok := ctx.Value("user_id").(string)
+	// if !ok || userID == "" {
+	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	// }
+	//
+	// // 3b. Lookup portability record by portability_id
+	// // TODO: Query PortabilityHistory table to get EntryID and verify user owns it
+	// // For now, assume portability_id format is "port-<entryID>"
+	//
+	// // Parse portability_id to extract entry_id (mock implementation)
+	// // In real mode, this would query the PortabilityHistory table
+	// var entryID uuid.UUID
+	// // TODO: Fetch from PortabilityHistory table
+	//
+	// requestedBy, err := uuid.Parse(userID)
+	// if err != nil {
+	// 	h.logger.Error("ConfirmPortability: invalid user_id", "error", err, "user_id", userID)
+	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
+	// }
+	//
+	// // 3c. Update entry status to ACTIVE (portability confirmed)
+	// cmd := commands.UpdateEntryCommand{
+	// 	EntryID:     entryID,
+	// 	RequestedBy: requestedBy,
+	// 	// Status: "ACTIVE" (portability completed)
+	// }
+	//
+	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	// if err != nil {
+	// 	h.logger.Error("ConfirmPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
+	// 	return nil, mappers.MapDomainErrorToGRPC(err)
+	// }
+	//
+	// // 3d. Map domain result → proto response
+	// h.logger.Info("ConfirmPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	// return &corev1.ConfirmPortabilityResponse{
+	// 	PortabilityId: req.GetPortabilityId(),
+	// 	KeyId:         entry.ID.String(),
+	// 	Status:        mappers.MapDomainStatusToProto(entry.Status),
+	// 	ConfirmedAt:   timestamppb.New(entry.UpdatedAt),
+	// }, nil
+}
+
+// CancelPortability cancels a portability operation
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes business logic via UpdateEntryCommandHandler (revert changes)
+func (h *CoreDictServiceHandler) CancelPortability(ctx context.Context, req *corev1.CancelPortabilityRequest) (*corev1.CancelPortabilityResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetPortabilityId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "portability_id is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("CancelPortability: MOCK MODE", "portability_id", req.GetPortabilityId())
+		return &corev1.CancelPortabilityResponse{
+			PortabilityId: req.GetPortabilityId(),
+			CancelledAt:   timestamppb.Now(),
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("CancelPortability: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("CancelPortability: REAL MODE", "portability_id", req.GetPortabilityId())
+	//
+	// // 3a. Extract user_id from context (set by auth interceptor)
+	// userID, ok := ctx.Value("user_id").(string)
+	// if !ok || userID == "" {
+	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	// }
+	//
+	// // 3b. Lookup portability record by portability_id
+	// // TODO: Query PortabilityHistory table to get EntryID and original AccountID
+	// // Revert entry's AccountID to original value
+	//
+	// var entryID uuid.UUID
+	// var originalAccountID uuid.UUID
+	// // TODO: Fetch from PortabilityHistory table
+	//
+	// requestedBy, err := uuid.Parse(userID)
+	// if err != nil {
+	// 	h.logger.Error("CancelPortability: invalid user_id", "error", err, "user_id", userID)
+	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
+	// }
+	//
+	// // 3c. Revert entry's AccountID to original
+	// cmd := commands.UpdateEntryCommand{
+	// 	EntryID:     entryID,
+	// 	AccountID:   originalAccountID, // Revert to original account
+	// 	RequestedBy: requestedBy,
+	// 	// Status: "ACTIVE" (back to normal)
+	// }
+	//
+	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	// if err != nil {
+	// 	h.logger.Error("CancelPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
+	// 	return nil, mappers.MapDomainErrorToGRPC(err)
+	// }
+	//
+	// // 3d. Map domain result → proto response
+	// h.logger.Info("CancelPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	// return &corev1.CancelPortabilityResponse{
+	// 	PortabilityId: req.GetPortabilityId(),
+	// 	CancelledAt:   timestamppb.New(entry.UpdatedAt),
+	// }, nil
+}
+
+// ========================================================================
+// QUERY OPERATIONS
+// ========================================================================
+
+// LookupKey performs a DICT lookup for a PIX key (public data)
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns mock response
+// - REAL MODE: Executes query via GetEntryQueryHandler (returns PUBLIC data only)
+//
+// NOTE: This is a PUBLIC endpoint - no authentication required
+// Returns only public information (ISPB, branch, account, holder name, status)
+// Does NOT return sensitive data (CPF/CNPJ full, balance, etc.)
+func (h *CoreDictServiceHandler) LookupKey(ctx context.Context, req *corev1.LookupKeyRequest) (*corev1.LookupKeyResponse, error) {
+	// ========== 1. VALIDATION (always, regardless of mode) ==========
+	if req.GetKey() == nil {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+	if req.GetKey().GetKeyValue() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_value is required")
+	}
+
+	// ========== 2. MOCK MODE (for Front-End integration testing) ==========
+	if h.useMockMode {
+		h.logger.Info("LookupKey: MOCK MODE", "key_type", req.GetKey().GetKeyType(), "key_value", req.GetKey().GetKeyValue())
+		return &corev1.LookupKeyResponse{
+			Key: req.GetKey(),
+			Account: &commonv1.Account{
+				Ispb:          "12345678",
+				BranchCode:    "0001",
+				AccountNumber: "123456",
+				AccountType:   commonv1.AccountType_ACCOUNT_TYPE_CHECKING,
+			},
+			AccountHolderName: "John Doe",
+			Status:            commonv1.EntryStatus_ENTRY_STATUS_ACTIVE,
+		}, nil
+	}
+
+	// ========== 3. REAL MODE (business logic) ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("LookupKey: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("LookupKey: REAL MODE", "key_type", req.GetKey().GetKeyType(), "key_value", req.GetKey().GetKeyValue())
+	//
+	// // NOTE: LookupKey is PUBLIC - no user_id extraction needed
+	//
+	// // 3a. Map proto request → domain query
+	// query := mappers.MapProtoLookupKeyRequestToQuery(req)
+	//
+	// // 3b. Execute query handler
+	// entry, err := h.getEntryQuery.Handle(ctx, query)
+	// if err != nil {
+	// 	h.logger.Error("LookupKey: query failed", "error", err, "key_value", req.GetKey().GetKeyValue())
+	// 	return nil, mappers.MapDomainErrorToGRPC(err)
+	// }
+	//
+	// // 3c. Fetch account details (to include in response)
+	// var account *entities.Account
+	// if h.getAccountQuery != nil {
+	// 	account, _ = h.getAccountQuery.Handle(ctx, queries.GetAccountQuery{AccountID: entry.AccountID})
+	// }
+	//
+	// // 3d. Map domain result → proto response (PUBLIC DATA ONLY)
+	// h.logger.Info("LookupKey: success", "entry_id", entry.ID, "key_value", req.GetKey().GetKeyValue())
+	// resp := &corev1.LookupKeyResponse{
+	// 	Key:    req.GetKey(),
+	// 	Status: mappers.MapDomainStatusToProto(entry.Status),
+	// }
+	//
+	// // Map account (public fields only)
+	// if account != nil {
+	// 	resp.Account = mappers.MapDomainAccountToProto(account)
+	// 	resp.AccountHolderName = account.HolderName // Public field
+	// 	// DO NOT include: CPF/CNPJ full, balance, sensitive fields
+	// }
+	//
+	// return resp, nil
+}
+
+// HealthCheck performs a health check of the Core DICT service
+//
+// HYBRID MODE:
+// - MOCK MODE: Returns healthy status
+// - REAL MODE: Checks connectivity to dependencies (PostgreSQL, Redis, Pulsar, Connect)
+//
+// NOTE: This is a PUBLIC endpoint - no authentication required
+func (h *CoreDictServiceHandler) HealthCheck(ctx context.Context, _ *emptypb.Empty) (*corev1.HealthCheckResponse, error) {
+	// ========== MOCK MODE ==========
+	if h.useMockMode {
+		h.logger.Info("HealthCheck: MOCK MODE")
+		return &corev1.HealthCheckResponse{
+			Status:           corev1.HealthCheckResponse_HEALTH_STATUS_HEALTHY,
+			ConnectReachable: true,
+			CheckedAt:        timestamppb.Now(),
+		}, nil
+	}
+
+	// ========== REAL MODE ==========
+	// TODO: Implement real mode after fixing mappers
+	h.logger.Error("HealthCheck: REAL MODE not implemented yet")
+	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+
+	// h.logger.Info("HealthCheck: REAL MODE")
+	//
+	// // NOTE: HealthCheck is PUBLIC - no user_id extraction needed
+	//
+	// // Execute health check query
+	// healthStatus, err := h.healthCheckQuery.Handle(ctx, queries.HealthCheckQuery{})
+	// if err != nil {
+	// 	h.logger.Error("HealthCheck: query failed", "error", err)
+	// 	return &corev1.HealthCheckResponse{
+	// 		Status:           corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY,
+	// 		ConnectReachable: false,
+	// 		CheckedAt:        timestamppb.Now(),
+	// 	}, nil // Don't fail - return unhealthy status
+	// }
+	//
+	// // Map domain result → proto response
+	// h.logger.Info("HealthCheck: success", "status", healthStatus.Status)
+	//
+	// // Map status string to proto enum
+	// var protoStatus corev1.HealthCheckResponse_HealthStatus
+	// switch healthStatus.Status {
+	// case "healthy":
+	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_HEALTHY
+	// case "degraded":
+	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_DEGRADED
+	// case "unhealthy":
+	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY
+	// default:
+	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNKNOWN
+	// }
+	//
+	// // Check if Connect service is reachable
+	// connectReachable := true
+	// if connectStatus, ok := healthStatus.Dependencies["connect"].(map[string]interface{}); ok {
+	// 	if status, ok := connectStatus["status"].(string); ok {
+	// 		connectReachable = (status == "healthy")
+	// 	}
+	// }
+	//
+	// return &corev1.HealthCheckResponse{
+	// 	Status:           protoStatus,
+	// 	ConnectReachable: connectReachable,
+	// 	CheckedAt:        timestamppb.New(healthStatus.Timestamp),
+	// }, nil
+}

@@ -1,0 +1,68 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'dict-local'
+    environment: 'development'
+
+# Alerting configuration (placeholder)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Rule files (for alerts)
+rule_files:
+  # - "alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # PostgreSQL Exporter (if added later)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: []
+    # - targets: ['postgres-exporter:9187']
+
+  # Redis Exporter (if added later)
+  - job_name: 'redis'
+    static_configs:
+      - targets: []
+    # - targets: ['redis-exporter:9121']
+
+  # Temporal Server metrics
+  - job_name: 'temporal'
+    static_configs:
+      - targets: ['temporal:7233']
+    metrics_path: '/metrics'
+
+  # Pulsar metrics
+  - job_name: 'pulsar'
+    static_configs:
+      - targets: ['pulsar:8080']
+    metrics_path: '/metrics'
+
+  # conn-dict service (when running)
+  - job_name: 'conn-dict'
+    static_configs:
+      - targets: []
+    # - targets: ['conn-dict:9091']
+    metrics_path: '/metrics'
+
+  # conn-bridge service (when running)
+  - job_name: 'conn-bridge'
+    static_configs:
+      - targets: []
+    # - targets: ['conn-bridge:9095']
+    metrics_path: '/metrics'
+
+  # core-dict service (when running)
+  - job_name: 'core-dict'
+    static_configs:
+      - targets: []
+    # - targets: ['core-dict:9093']
+    metrics_path: '/metrics'

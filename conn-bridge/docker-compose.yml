@@ -1,0 +1,232 @@
+version: '3.8'
+
+services:
+  # ===================================
+  # Go Service - RSFN Bridge
+  # ===================================
+  rsfn-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rsfn-bridge
+    hostname: rsfn-bridge
+    ports:
+      - "9094:9094"     # gRPC
+      - "8082:8082"     # Health Check
+      - "9090:9090"     # Prometheus Metrics
+    environment:
+      # Application
+      - APP_ENV=development
+      - APP_NAME=rsfn-bridge
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=json
+
+      # gRPC
+      - GRPC_PORT=9094
+      - GRPC_ENABLED=true
+
+      # Health
+      - HEALTH_PORT=8082
+
+      # Bacen
+      - BACEN_URL=https://rsfn-hml.bcb.gov.br/dict
+      - BACEN_TIMEOUT=30s
+      - BACEN_ISPB=12345678
+
+      # mTLS Certificates
+      - CERT_PATH=/certs/cert.pem
+      - KEY_PATH=/certs/key.pem
+      - CA_PATH=/certs/ca-chain.pem
+
+      # XML Signer
+      - XML_SIGNER_URL=http://xml-signer:8080
+      - XML_SIGNER_TIMEOUT=10s
+
+      # Pulsar
+      - PULSAR_ENABLED=true
+      - PULSAR_URL=pulsar://pulsar:6650
+      - PULSAR_TOPIC_REQ_IN=rsfn-dict-req-out
+      - PULSAR_TOPIC_RES_OUT=rsfn-dict-res-out
+      - PULSAR_SUBSCRIPTION=bridge-dict-subscription
+
+      # Circuit Breaker
+      - CIRCUIT_BREAKER_ENABLED=true
+      - CIRCUIT_BREAKER_MAX_FAILURES=5
+      - CIRCUIT_BREAKER_TIMEOUT=30s
+
+      # Observability
+      - OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:14268/api/traces
+      - PROMETHEUS_ENABLED=true
+      - PROMETHEUS_PORT=9090
+
+    volumes:
+      - ./certs:/certs:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+
+    depends_on:
+      xml-signer:
+        condition: service_healthy
+      pulsar:
+        condition: service_started
+      jaeger:
+        condition: service_started
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ===================================
+  # Java Service - XML Signer
+  # ===================================
+  xml-signer:
+    build:
+      context: ./xml-signer
+      dockerfile: Dockerfile
+    container_name: xml-signer
+    hostname: xml-signer
+    ports:
+      - "8080:8080"     # REST API
+    environment:
+      - SPRING_PROFILES_ACTIVE=development
+      - SERVER_PORT=8080
+      - LOGGING_LEVEL_ROOT=INFO
+      - LOGGING_LEVEL_COM_LBPAY=DEBUG
+      - KEYSTORE_PATH=/certs/keystore.p12
+      - KEYSTORE_PASSWORD=changeit
+      - KEYSTORE_ALIAS=lbpay-dict
+
+    volumes:
+      - ./certs:/certs:ro
+      - ./logs:/app/logs
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ===================================
+  # Apache Pulsar (Message Broker)
+  # ===================================
+  pulsar:
+    image: apachepulsar/pulsar:3.1.0
+    container_name: pulsar
+    hostname: pulsar
+    command: bin/pulsar standalone
+    ports:
+      - "6650:6650"     # Binary protocol
+      - "8081:8080"     # HTTP admin
+    environment:
+      - PULSAR_MEM=-Xms512m -Xmx512m
+
+    volumes:
+      - pulsar-data:/pulsar/data
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+  # ===================================
+  # Jaeger (Distributed Tracing)
+  # ===================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.51
+    container_name: jaeger
+    hostname: jaeger
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14268:14268"   # HTTP collector
+      - "14250:14250"   # gRPC collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=info
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+  # ===================================
+  # Prometheus (Metrics)
+  # ===================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: prometheus
+    hostname: prometheus
+    ports:
+      - "9091:9090"     # Prometheus UI
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+  # ===================================
+  # Grafana (Visualization)
+  # ===================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    hostname: grafana
+    ports:
+      - "3000:3000"     # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+
+    depends_on:
+      - prometheus
+
+    networks:
+      - bridge-network
+
+    restart: unless-stopped
+
+# ===================================
+# Networks
+# ===================================
+networks:
+  bridge-network:
+    driver: bridge
+    name: rsfn-bridge-network
+
+# ===================================
+# Volumes
+# ===================================
+volumes:
+  pulsar-data:
+    name: rsfn-bridge-pulsar-data
+  prometheus-data:
+    name: rsfn-bridge-prometheus-data
+  grafana-data:
+    name: rsfn-bridge-grafana-data

@@ -1,0 +1,617 @@
+syntax = "proto3";
+
+package dict.bridge.v1;
+
+option go_package = "github.com/lbpay-lab/dict-contracts/gen/proto/bridge/v1;bridgev1";
+
+import "proto/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ====================================================================
+// BRIDGE SERVICE - Comunicação Connect → Bridge → Bacen DICT
+// ====================================================================
+service BridgeService {
+  // ========== Operações de Entry (Chave DICT) ==========
+
+  // Criar nova chave DICT no Bacen
+  rpc CreateEntry(CreateEntryRequest) returns (CreateEntryResponse);
+
+  // Buscar chave DICT existente no Bacen
+  rpc GetEntry(GetEntryRequest) returns (GetEntryResponse);
+
+  // Deletar chave DICT no Bacen
+  rpc DeleteEntry(DeleteEntryRequest) returns (DeleteEntryResponse);
+
+  // Atualizar dados da conta vinculada à chave
+  rpc UpdateEntry(UpdateEntryRequest) returns (UpdateEntryResponse);
+
+  // ========== Operações de Claim (Reivindicação - 30 dias) ==========
+
+  // Criar nova claim (portabilidade/ownership) no Bacen
+  rpc CreateClaim(CreateClaimRequest) returns (CreateClaimResponse);
+
+  // Buscar status de claim no Bacen
+  rpc GetClaim(GetClaimRequest) returns (GetClaimResponse);
+
+  // Completar claim (confirmação pelo dono)
+  rpc CompleteClaim(CompleteClaimRequest) returns (CompleteClaimResponse);
+
+  // Cancelar claim (rejeição ou timeout)
+  rpc CancelClaim(CancelClaimRequest) returns (CancelClaimResponse);
+
+  // ========== Operações de Portabilidade ==========
+
+  // Iniciar portabilidade de chave
+  rpc InitiatePortability(InitiatePortabilityRequest) returns (InitiatePortabilityResponse);
+
+  // Confirmar portabilidade de conta
+  rpc ConfirmPortability(ConfirmPortabilityRequest) returns (ConfirmPortabilityResponse);
+
+  // Cancelar portabilidade
+  rpc CancelPortability(CancelPortabilityRequest) returns (CancelPortabilityResponse);
+
+  // ========== Directory Queries (Consultas DICT) ==========
+
+  // Consultar diretório completo
+  rpc GetDirectory(GetDirectoryRequest) returns (GetDirectoryResponse);
+
+  // Buscar chaves por critérios
+  rpc SearchEntries(SearchEntriesRequest) returns (SearchEntriesResponse);
+
+  // ========== Health Check ==========
+
+  // Health check do Bridge (verifica conectividade com Bacen)
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+// ====================================================================
+// ENTRY OPERATIONS - Messages
+// ====================================================================
+
+message CreateEntryRequest {
+  // Chave DICT a ser criada
+  dict.common.v1.DictKey key = 1;
+
+  // Conta a ser vinculada
+  dict.common.v1.Account account = 2;
+
+  // Idempotency key (para retry safety)
+  string idempotency_key = 3;
+
+  // Request ID (rastreamento)
+  string request_id = 4;
+}
+
+message CreateEntryResponse {
+  // ID da entry criada (UUID)
+  string entry_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Status da entry
+  dict.common.v1.EntryStatus status = 3;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 4;
+
+  // Resposta do Bacen
+  string bacen_transaction_id = 5;
+  google.protobuf.Timestamp bacen_timestamp = 6;
+}
+
+message GetEntryRequest {
+  // Buscar por ID ou por chave
+  oneof identifier {
+    string entry_id = 1;      // ID interno
+    string external_id = 2;   // ID Bacen
+    KeyQuery key_query = 3;   // Por tipo + valor
+  }
+
+  // Request ID
+  string request_id = 4;
+}
+
+message KeyQuery {
+  dict.common.v1.KeyType key_type = 1;
+  string key_value = 2;
+}
+
+message GetEntryResponse {
+  // ID da entry
+  string entry_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Chave DICT
+  dict.common.v1.DictKey key = 3;
+
+  // Conta vinculada
+  dict.common.v1.Account account = 4;
+
+  // Status
+  dict.common.v1.EntryStatus status = 5;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+
+  // Entry foi encontrada?
+  bool found = 8;
+}
+
+message DeleteEntryRequest {
+  // ID da entry a deletar
+  string entry_id = 1;
+
+  // Chave DICT (alternativa ao entry_id)
+  dict.common.v1.DictKey key = 2;
+
+  // Idempotency key
+  string idempotency_key = 3;
+
+  // Request ID
+  string request_id = 4;
+}
+
+message DeleteEntryResponse {
+  // Confirmação de deleção
+  bool deleted = 1;
+
+  // Timestamp da deleção
+  google.protobuf.Timestamp deleted_at = 2;
+
+  // Bacen response
+  string bacen_transaction_id = 3;
+}
+
+message UpdateEntryRequest {
+  // ID da entry a atualizar
+  string entry_id = 1;
+
+  // Nova conta (atualização parcial de campos)
+  dict.common.v1.Account new_account = 2;
+
+  // Idempotency key
+  string idempotency_key = 3;
+
+  // Request ID
+  string request_id = 4;
+}
+
+message UpdateEntryResponse {
+  // ID da entry atualizada
+  string entry_id = 1;
+
+  // Nova conta
+  dict.common.v1.Account account = 2;
+
+  // Timestamp da atualização
+  google.protobuf.Timestamp updated_at = 3;
+
+  // Bacen response
+  string bacen_transaction_id = 4;
+}
+
+// ====================================================================
+// CLAIM OPERATIONS - Messages (30 dias)
+// ====================================================================
+
+message CreateClaimRequest {
+  // ID da entry a ser reivindicada
+  string entry_id = 1;
+
+  // Chave a ser reivindicada
+  dict.common.v1.KeyType key_type = 2;
+  string key_value = 3;
+
+  // ISPB do reivindicador
+  string claimer_ispb = 4;
+
+  // ISPB do dono atual
+  string owner_ispb = 5;
+
+  // Conta do reivindicador
+  dict.common.v1.Account claimer_account = 6;
+
+  // Período de conclusão (deve ser 30 dias - TEC-003 v2.1)
+  int32 completion_period_days = 7;
+
+  // Idempotency key
+  string idempotency_key = 8;
+
+  // Request ID
+  string request_id = 9;
+}
+
+message CreateClaimResponse {
+  // ID da claim criada (UUID)
+  string claim_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Status inicial (sempre "OPEN")
+  dict.common.v1.ClaimStatus status = 3;
+
+  // Período de conclusão (30 dias)
+  int32 completion_period_days = 4;
+
+  // Data de expiração (created_at + 30 dias)
+  google.protobuf.Timestamp expires_at = 5;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 6;
+
+  // Bacen response
+  string bacen_claim_id = 7;
+}
+
+message GetClaimRequest {
+  // ID da claim ou ID externo do Bacen
+  oneof identifier {
+    string claim_id = 1;
+    string external_id = 2;
+  }
+
+  // Request ID
+  string request_id = 3;
+}
+
+message GetClaimResponse {
+  // ID da claim
+  string claim_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // ID da entry
+  string entry_id = 3;
+
+  // Status atual
+  dict.common.v1.ClaimStatus status = 4;
+
+  // Período de conclusão (30 dias)
+  int32 completion_period_days = 5;
+
+  // ISPBs
+  string claimer_ispb = 6;
+  string owner_ispb = 7;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  optional google.protobuf.Timestamp completed_at = 10;
+
+  // Claim foi encontrada?
+  bool found = 11;
+
+  // Informações adicionais
+  int32 days_remaining = 12;  // Dias até expiração
+  bool expired = 13;          // Se já passou dos 30 dias
+}
+
+message CompleteClaimRequest {
+  // ID da claim a completar
+  string claim_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Decisão
+  string resolution_reason = 3;  // Motivo da aprovação
+
+  // Idempotency key
+  string idempotency_key = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message CompleteClaimResponse {
+  // ID da claim
+  string claim_id = 1;
+
+  // Novo status (COMPLETED)
+  dict.common.v1.ClaimStatus status = 2;
+
+  // Entry atualizado (agora pertence ao claimer)
+  Entry updated_entry = 3;
+
+  // Timestamp de conclusão
+  google.protobuf.Timestamp completed_at = 4;
+
+  // Bacen response
+  string bacen_transaction_id = 5;
+}
+
+message CancelClaimRequest {
+  // ID da claim a cancelar
+  string claim_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Razão do cancelamento
+  string cancellation_reason = 3;  // "USER_REQUESTED", "TIMEOUT", "ERROR"
+
+  // Idempotency key
+  string idempotency_key = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message CancelClaimResponse {
+  // ID da claim
+  string claim_id = 1;
+
+  // Novo status (CANCELLED)
+  dict.common.v1.ClaimStatus status = 2;
+
+  // Timestamp de cancelamento
+  google.protobuf.Timestamp cancelled_at = 3;
+
+  // Bacen response
+  string bacen_transaction_id = 4;
+}
+
+// ====================================================================
+// PORTABILITY OPERATIONS - Messages
+// ====================================================================
+
+message InitiatePortabilityRequest {
+  // ID da entry em portabilidade
+  string entry_id = 1;
+
+  // Chave em portabilidade
+  dict.common.v1.DictKey key = 2;
+
+  // Nova conta de destino
+  dict.common.v1.Account new_account = 3;
+
+  // Idempotency key
+  string idempotency_key = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message InitiatePortabilityResponse {
+  // ID da portabilidade criada
+  string portability_id = 1;
+
+  // ID da entry
+  string entry_id = 2;
+
+  // Novo status da entry
+  dict.common.v1.EntryStatus status = 3;
+
+  // Timestamp de início
+  google.protobuf.Timestamp initiated_at = 4;
+
+  // Bacen response
+  string bacen_transaction_id = 5;
+}
+
+message ConfirmPortabilityRequest {
+  // ID da entry em portabilidade
+  string entry_id = 1;
+
+  // ID da portabilidade
+  string portability_id = 2;
+
+  // Nova conta de destino
+  dict.common.v1.Account new_account = 3;
+
+  // Idempotency key
+  string idempotency_key = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message ConfirmPortabilityResponse {
+  // ID da entry
+  string entry_id = 1;
+
+  // ID da portabilidade
+  string portability_id = 2;
+
+  // Novo status (ACTIVE)
+  dict.common.v1.EntryStatus status = 3;
+
+  // Nova conta
+  dict.common.v1.Account account = 4;
+
+  // Timestamp de confirmação
+  google.protobuf.Timestamp confirmed_at = 5;
+
+  // Bacen response
+  string bacen_transaction_id = 6;
+}
+
+message CancelPortabilityRequest {
+  // ID da entry
+  string entry_id = 1;
+
+  // ID da portabilidade
+  string portability_id = 2;
+
+  // Razão do cancelamento
+  string reason = 3;
+
+  // Idempotency key
+  string idempotency_key = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message CancelPortabilityResponse {
+  // ID da entry
+  string entry_id = 1;
+
+  // ID da portabilidade
+  string portability_id = 2;
+
+  // Status revertido (ACTIVE)
+  dict.common.v1.EntryStatus status = 3;
+
+  // Timestamp de cancelamento
+  google.protobuf.Timestamp cancelled_at = 4;
+
+  // Bacen response
+  string bacen_transaction_id = 5;
+}
+
+// ====================================================================
+// DIRECTORY QUERIES - Messages
+// ====================================================================
+
+message GetDirectoryRequest {
+  // Filtros opcionais
+  optional dict.common.v1.KeyType key_type = 1;
+  optional dict.common.v1.EntryStatus status = 2;
+
+  // Paginação
+  int32 page_size = 3;
+  string page_token = 4;
+
+  // Request ID
+  string request_id = 5;
+}
+
+message GetDirectoryResponse {
+  // Lista de entries
+  repeated Entry entries = 1;
+
+  // Token para próxima página
+  string next_page_token = 2;
+
+  // Total de entries
+  int32 total_count = 3;
+}
+
+message SearchEntriesRequest {
+  // Critérios de busca
+  optional string account_holder_document = 1;
+  optional string account_number = 2;
+  optional string ispb = 3;
+
+  // Paginação
+  int32 page_size = 4;
+  string page_token = 5;
+
+  // Request ID
+  string request_id = 6;
+}
+
+message SearchEntriesResponse {
+  // Lista de entries encontradas
+  repeated Entry entries = 1;
+
+  // Token para próxima página
+  string next_page_token = 2;
+
+  // Total de entries encontradas
+  int32 total_count = 3;
+}
+
+// ====================================================================
+// ENTRY - Representação completa de uma chave PIX
+// ====================================================================
+message Entry {
+  // ID interno (UUID)
+  string entry_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // Tipo e valor da chave
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Conta vinculada
+  dict.common.v1.Account account = 5;
+
+  // Status
+  dict.common.v1.EntryStatus status = 6;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// ====================================================================
+// CLAIM - Representação completa de uma reivindicação
+// ====================================================================
+message Claim {
+  // ID interno (UUID)
+  string claim_id = 1;
+
+  // ID externo do Bacen
+  string external_id = 2;
+
+  // ID da entry
+  string entry_id = 3;
+
+  // Status
+  dict.common.v1.ClaimStatus status = 4;
+
+  // Período de conclusão (30 dias)
+  int32 completion_period_days = 5;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+
+  // ISPBs
+  string claimer_ispb = 8;
+  string owner_ispb = 9;
+}
+
+// ====================================================================
+// HEALTH CHECK
+// ====================================================================
+
+message HealthCheckResponse {
+  // Status geral do Bridge
+  HealthStatus status = 1;
+
+  // Conectividade com Bacen DICT
+  BacenConnectionStatus bacen_status = 2;
+
+  // Certificado mTLS
+  CertificateStatus certificate_status = 3;
+
+  // Latências
+  int64 bacen_latency_ms = 4;
+
+  // Timestamp do health check
+  google.protobuf.Timestamp last_check = 5;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+enum BacenConnectionStatus {
+  BACEN_CONNECTION_UNSPECIFIED = 0;
+  BACEN_CONNECTION_OK = 1;
+  BACEN_CONNECTION_TIMEOUT = 2;
+  BACEN_CONNECTION_AUTH_FAILED = 3;
+  BACEN_CONNECTION_TLS_ERROR = 4;
+}
+
+enum CertificateStatus {
+  CERTIFICATE_STATUS_UNSPECIFIED = 0;
+  CERTIFICATE_STATUS_VALID = 1;
+  CERTIFICATE_STATUS_EXPIRING_SOON = 2;  // < 30 dias
+  CERTIFICATE_STATUS_EXPIRED = 3;
+}

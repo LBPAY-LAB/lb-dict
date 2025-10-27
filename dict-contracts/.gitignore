@@ -1,0 +1,21 @@
+# Código gerado
+gen/
+*.pb.go
+*_grpc.pb.go
+
+# Buf cache
+.buf/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

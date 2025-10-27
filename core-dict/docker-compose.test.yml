@@ -1,0 +1,255 @@
+version: '3.9'
+
+# Docker Compose for E2E Testing
+# Starts all services needed for end-to-end tests:
+# - Core-Dict
+# - Conn-Dict (Connect)
+# - Conn-Bridge (Bridge)
+# - PostgreSQL
+# - Redis
+# - Temporal
+# - Pulsar
+# - Bacen Mock (simulated)
+
+services:
+  # ========================================
+  # Infrastructure Services
+  # ========================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: core-dict-postgres-test
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: core_dict_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d core_dict_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dict-test-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: core-dict-redis-test
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - dict-test-network
+
+  pulsar:
+    image: apachepulsar/pulsar:3.1.0
+    container_name: core-dict-pulsar-test
+    command: bin/pulsar standalone
+    ports:
+      - "6651:6650"  # Broker
+      - "8081:8080"  # Admin API
+    environment:
+      PULSAR_MEM: "-Xms512m -Xmx512m"
+    healthcheck:
+      test: ["CMD", "bin/pulsar-admin", "brokers", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - dict-test-network
+
+  temporal:
+    image: temporalio/auto-setup:1.22.0
+    container_name: core-dict-temporal-test
+    ports:
+      - "7234:7233"  # gRPC
+      - "8089:8088"  # UI
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=test_user
+      - POSTGRES_PWD=test_password
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "cluster", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - dict-test-network
+
+  # ========================================
+  # Application Services
+  # ========================================
+
+  core-dict:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: core-dict-test
+    ports:
+      - "8080:8080"  # REST API
+      - "9090:9090"  # gRPC Server
+      - "9091:9091"  # Metrics
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: test_user
+      DB_PASSWORD: test_password
+      DB_NAME: core_dict_test
+      DB_SSL_MODE: disable
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+
+      # Pulsar
+      PULSAR_URL: pulsar://pulsar:6650
+      PULSAR_ADMIN_URL: http://pulsar:8080
+
+      # Connect gRPC
+      CONNECT_GRPC_URL: conn-dict:9092
+
+      # Application
+      APP_ENV: test
+      LOG_LEVEL: debug
+      HTTP_PORT: 8080
+      GRPC_PORT: 9090
+      METRICS_PORT: 9091
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pulsar:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dict-test-network
+
+  conn-dict:
+    build:
+      context: ../conn-dict
+      dockerfile: Dockerfile
+    container_name: conn-dict-test
+    ports:
+      - "8081:8081"  # Admin API
+      - "9092:9092"  # gRPC Server
+      - "9093:9093"  # Metrics
+    environment:
+      # Temporal
+      TEMPORAL_HOST: temporal
+      TEMPORAL_PORT: 7233
+      TEMPORAL_NAMESPACE: default
+
+      # Pulsar
+      PULSAR_URL: pulsar://pulsar:6650
+      PULSAR_SUBSCRIPTION: conn-dict-test
+
+      # Bridge gRPC
+      BRIDGE_GRPC_URL: conn-bridge:9094
+
+      # Application
+      APP_ENV: test
+      LOG_LEVEL: debug
+      HTTP_PORT: 8081
+      GRPC_PORT: 9092
+      METRICS_PORT: 9093
+    depends_on:
+      temporal:
+        condition: service_healthy
+      pulsar:
+        condition: service_healthy
+      conn-bridge:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dict-test-network
+
+  conn-bridge:
+    build:
+      context: ../conn-bridge
+      dockerfile: Dockerfile
+    container_name: conn-bridge-test
+    ports:
+      - "8082:8082"  # Health/Admin API
+      - "9094:9094"  # gRPC Server
+      - "9095:9095"  # Metrics
+    environment:
+      # Bacen Mock
+      BACEN_SOAP_URL: http://bacen-mock:8083/dict/api/v2
+      BACEN_MTLS_ENABLED: false  # Disabled for testing
+
+      # XML Signer
+      XML_SIGNER_ENABLED: true
+      ICP_BRASIL_CERT_PATH: /certs/test-cert.pem
+      ICP_BRASIL_KEY_PATH: /certs/test-key.pem
+
+      # Application
+      APP_ENV: test
+      LOG_LEVEL: debug
+      HTTP_PORT: 8082
+      GRPC_PORT: 9094
+      METRICS_PORT: 9095
+    depends_on:
+      - bacen-mock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dict-test-network
+
+  # ========================================
+  # Mock Services
+  # ========================================
+
+  bacen-mock:
+    image: mockserver/mockserver:5.15.0
+    container_name: bacen-mock-test
+    ports:
+      - "8083:1080"
+    environment:
+      MOCKSERVER_PROPERTY_FILE: /config/mockserver.properties
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/initializerJson.json
+    volumes:
+      - ./tests/mocks/bacen-expectations.json:/config/initializerJson.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - dict-test-network
+
+volumes:
+  postgres-test-data:
+    driver: local
+
+networks:
+  dict-test-network:
+    driver: bridge
+    name: dict-test-network

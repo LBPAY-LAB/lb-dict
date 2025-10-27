@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package dict.common.v1;
+
+option go_package = "github.com/lbpay-lab/dict-contracts/gen/proto/common/v1;commonv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ====================================================================
+// COMMON TYPES - Tipos compartilhados entre todos os serviços
+// ====================================================================
+
+// KeyType: Tipos de chave DICT (PIX) suportados
+enum KeyType {
+  KEY_TYPE_UNSPECIFIED = 0;
+  KEY_TYPE_CPF = 1;        // CPF (11 dígitos)
+  KEY_TYPE_CNPJ = 2;       // CNPJ (14 dígitos)
+  KEY_TYPE_EMAIL = 3;      // E-mail
+  KEY_TYPE_PHONE = 4;      // Telefone (+5511999999999)
+  KEY_TYPE_EVP = 5;        // Chave aleatória (UUID)
+}
+
+// AccountType: Tipo de conta bancária
+enum AccountType {
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  ACCOUNT_TYPE_CHECKING = 1;    // Conta Corrente (CACC)
+  ACCOUNT_TYPE_SAVINGS = 2;     // Conta Poupança (SVGS)
+  ACCOUNT_TYPE_PAYMENT = 3;     // Conta Pagamento (TRAN)
+  ACCOUNT_TYPE_SALARY = 4;      // Conta Salário (SLRY)
+}
+
+// DocumentType: Tipo de documento (CPF ou CNPJ)
+enum DocumentType {
+  DOCUMENT_TYPE_UNSPECIFIED = 0;
+  DOCUMENT_TYPE_CPF = 1;
+  DOCUMENT_TYPE_CNPJ = 2;
+}
+
+// EntryStatus: Status de uma chave DICT
+enum EntryStatus {
+  ENTRY_STATUS_UNSPECIFIED = 0;
+  ENTRY_STATUS_ACTIVE = 1;
+  ENTRY_STATUS_PORTABILITY_PENDING = 2;
+  ENTRY_STATUS_PORTABILITY_CONFIRMED = 3;
+  ENTRY_STATUS_CLAIM_PENDING = 4;
+  ENTRY_STATUS_DELETED = 5;
+}
+
+// ClaimStatus: Status de uma reivindicação (30 dias)
+enum ClaimStatus {
+  CLAIM_STATUS_UNSPECIFIED = 0;
+  CLAIM_STATUS_OPEN = 1;
+  CLAIM_STATUS_WAITING_RESOLUTION = 2;
+  CLAIM_STATUS_CONFIRMED = 3;
+  CLAIM_STATUS_CANCELLED = 4;
+  CLAIM_STATUS_COMPLETED = 5;
+  CLAIM_STATUS_EXPIRED = 6;
+}
+
+// ====================================================================
+// ACCOUNT - Representa uma conta bancária no SPB
+// ====================================================================
+message Account {
+  // ISPB da instituição (8 dígitos)
+  string ispb = 1;
+
+  // Tipo de conta
+  AccountType account_type = 2;
+
+  // Número da conta (sem dígito verificador)
+  string account_number = 3;
+
+  // Dígito verificador da conta
+  string account_check_digit = 4;
+
+  // Agência (branch code)
+  string branch_code = 5;
+
+  // Nome do titular da conta
+  string account_holder_name = 6;
+
+  // CPF/CNPJ do titular
+  string account_holder_document = 7;
+
+  // Tipo de documento (CPF ou CNPJ)
+  DocumentType document_type = 8;
+}
+
+// ====================================================================
+// DICT KEY - Representa uma chave DICT (PIX)
+// ====================================================================
+message DictKey {
+  // Tipo de chave
+  KeyType key_type = 1;
+
+  // Valor da chave (CPF, phone, email, EVP)
+  string key_value = 2;
+}
+
+// ====================================================================
+// ERROR DETAILS - Informações adicionais sobre erros
+// ====================================================================
+
+// Detalhes de erro de validação
+message ValidationError {
+  // Campo que falhou na validação
+  string field = 1;
+
+  // Descrição do erro
+  string description = 2;
+
+  // Constraint violada (e.g., "required", "max_length", "pattern")
+  string constraint = 3;
+
+  // Valor fornecido (para debugging)
+  string provided_value = 4;
+}
+
+// Detalhes de erro de negócio
+message BusinessError {
+  // Código de erro de negócio (e.g., "CLAIM_ALREADY_EXISTS")
+  string error_code = 1;
+
+  // Mensagem legível
+  string message = 2;
+
+  // Contexto adicional
+  map<string, string> context = 3;
+}
+
+// Detalhes de erro de infraestrutura
+message InfrastructureError {
+  // Componente que falhou (e.g., "PostgreSQL", "Redis", "Bridge")
+  string component = 1;
+
+  // Tipo de erro (e.g., "CONNECTION_TIMEOUT", "UNAVAILABLE")
+  string error_type = 2;
+
+  // Mensagem original do erro
+  string original_message = 3;
+
+  // Retry possível?
+  bool retriable = 4;
+}
+
+// Detalhes de erro do Bacen (via Bridge)
+message BacenError {
+  // Código de erro do Bacen (SOAP fault code)
+  string bacen_code = 1;
+
+  // Mensagem do Bacen
+  string bacen_message = 2;
+
+  // ID da requisição ao Bacen
+  string bacen_request_id = 3;
+
+  // Timestamp do erro
+  google.protobuf.Timestamp occurred_at = 4;
+}
+
+// ====================================================================
+// ERROR RESPONSE - Wrapper para todos os erros
+// ====================================================================
+message ErrorResponse {
+  // Código de status gRPC (mapeado de grpc.Code)
+  int32 grpc_code = 1;
+
+  // Mensagem principal
+  string message = 2;
+
+  // Detalhes específicos (usar oneof para tipo seguro)
+  oneof details {
+    ValidationError validation = 3;
+    BusinessError business = 4;
+    InfrastructureError infrastructure = 5;
+    BacenError bacen = 6;
+  }
+
+  // Request ID para rastreamento (correlação com logs)
+  string request_id = 7;
+
+  // Timestamp do erro
+  google.protobuf.Timestamp timestamp = 8;
+}

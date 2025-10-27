@@ -1,0 +1,100 @@
+{
+  "httpRequests": [
+    {
+      "method": "POST",
+      "path": "/dict/api/v2/entries",
+      "body": {
+        "type": "JSON_SCHEMA",
+        "jsonSchema": {
+          "type": "object",
+          "properties": {
+            "keyType": { "type": "string" },
+            "keyValue": { "type": "string" }
+          }
+        }
+      },
+      "response": {
+        "statusCode": 201,
+        "headers": {
+          "Content-Type": ["application/json"]
+        },
+        "body": {
+          "id": "bacen-generated-id",
+          "status": "ACTIVE",
+          "timestamp": "2025-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/dict/api/v2/claims",
+      "body": {
+        "type": "JSON_SCHEMA",
+        "jsonSchema": {
+          "type": "object",
+          "properties": {
+            "claimType": { "type": "string" },
+            "entryId": { "type": "string" }
+          }
+        }
+      },
+      "response": {
+        "statusCode": 201,
+        "headers": {
+          "Content-Type": ["application/json"]
+        },
+        "body": {
+          "claimId": "bacen-claim-id",
+          "status": "OPEN",
+          "timestamp": "2025-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/dict/api/v2/entries/{id}",
+      "pathParameters": {
+        "id": [".*"]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": ["application/json"]
+        },
+        "body": {
+          "id": "${requestPathParameters.id}",
+          "status": "ACTIVE",
+          "keyType": "CPF",
+          "keyValue": "12345678901"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/dict/api/v2/check-duplicate",
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": ["application/json"]
+        },
+        "body": {
+          "isDuplicate": false
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "response": {
+        "statusCode": 200,
+        "headers": {
+          "Content-Type": ["application/json"]
+        },
+        "body": {
+          "status": "healthy",
+          "service": "bacen-mock"
+        }
+      }
+    }
+  ]
+}

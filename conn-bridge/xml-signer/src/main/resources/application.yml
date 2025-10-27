@@ -1,0 +1,41 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: xml-signer
+
+  # JSON configuration
+  jackson:
+    serialization:
+      indent-output: true
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Application properties
+app:
+  dev-mode: ${DEV_MODE:true}
+
+# Logging configuration
+logging:
+  level:
+    root: INFO
+    com.lbpay.xmlsigner: DEBUG
+    org.apache.xml.security: WARN
+    org.bouncycastle: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Management endpoints (actuator)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always

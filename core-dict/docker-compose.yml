@@ -1,0 +1,321 @@
+# ============================================
+# Core DICT - Docker Compose
+# ============================================
+# This file provides a complete local development environment
+# with PostgreSQL, Redis, and Apache Pulsar
+
+services:
+  # ==========================================
+  # PostgreSQL Database
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: core-dict-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lbpay_core_dict}
+      POSTGRES_USER: ${POSTGRES_USER:-dict_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_here}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+      TZ: America/Sao_Paulo
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d/migrations:ro
+    networks:
+      - core-dict-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dict_app} -d ${POSTGRES_DB:-lbpay_core_dict}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+
+  # ==========================================
+  # Redis Cache
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: core-dict-redis
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - core-dict-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+
+  # ==========================================
+  # Apache Pulsar
+  # ==========================================
+  pulsar:
+    image: apachepulsar/pulsar:3.2.0
+    container_name: core-dict-pulsar
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+    ports:
+      - "${PULSAR_PORT:-6650}:6650"      # Pulsar broker
+      - "${PULSAR_HTTP_PORT:-8080}:8080" # Pulsar admin API
+    volumes:
+      - pulsar_data:/pulsar/data
+      - pulsar_conf:/pulsar/conf
+    networks:
+      - core-dict-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/admin/v2/clusters"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    command: >
+      bin/pulsar standalone
+      --advertised-address localhost
+      --config /pulsar/conf/standalone.conf
+
+  # ==========================================
+  # Temporal Server
+  # ==========================================
+  temporal:
+    image: temporalio/auto-setup:1.22.4
+    container_name: core-dict-temporal
+    restart: unless-stopped
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_SEEDS: postgres
+      SKIP_DB_CREATE: "true"
+      SKIP_DEFAULT_NAMESPACE_CREATION: "false"
+      TZ: America/Sao_Paulo
+    ports:
+      - "${TEMPORAL_PORT:-7233}:7233"     # gRPC
+    networks:
+      - core-dict-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --tries=1 http://localhost:7233 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # ==========================================
+  # Temporal UI (Web Interface)
+  # ==========================================
+  temporal-ui:
+    image: temporalio/ui:2.21.3
+    container_name: core-dict-temporal-ui
+    restart: unless-stopped
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+      TZ: America/Sao_Paulo
+    ports:
+      - "${TEMPORAL_WEB_PORT:-8088}:8080"
+    networks:
+      - core-dict-network
+    depends_on:
+      - temporal
+    profiles:
+      - tools
+
+  # ==========================================
+  # PGAdmin (Optional - for DB management)
+  # ==========================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: core-dict-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@lbpay.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      TZ: America/Sao_Paulo
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - core-dict-network
+    depends_on:
+      - postgres
+    profiles:
+      - tools
+
+  # ==========================================
+  # Redis Commander (Optional - for Redis management)
+  # ==========================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: core-dict-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+      TZ: America/Sao_Paulo
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    networks:
+      - core-dict-network
+    depends_on:
+      - redis
+    profiles:
+      - tools
+
+  # ==========================================
+  # Prometheus (Optional - for metrics)
+  # ==========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: core-dict-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - core-dict-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    profiles:
+      - monitoring
+
+  # ==========================================
+  # Grafana (Optional - for visualization)
+  # ==========================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: core-dict-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: redis-datasource
+      TZ: America/Sao_Paulo
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - core-dict-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  core-dict-network:
+    name: core-dict-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ==========================================
+# Volumes
+# ==========================================
+volumes:
+  postgres_data:
+    name: core-dict-postgres-data
+    driver: local
+  redis_data:
+    name: core-dict-redis-data
+    driver: local
+  pulsar_data:
+    name: core-dict-pulsar-data
+    driver: local
+  pulsar_conf:
+    name: core-dict-pulsar-conf
+    driver: local
+  pgadmin_data:
+    name: core-dict-pgadmin-data
+    driver: local
+  prometheus_data:
+    name: core-dict-prometheus-data
+    driver: local
+  grafana_data:
+    name: core-dict-grafana-data
+    driver: local
+
+# ==========================================
+# Usage Instructions
+# ==========================================
+# Start all services:
+#   docker-compose up -d
+#
+# Start with tools (pgAdmin, Redis Commander):
+#   docker-compose --profile tools up -d
+#
+# Start with monitoring (Prometheus, Grafana):
+#   docker-compose --profile monitoring up -d
+#
+# Start everything:
+#   docker-compose --profile tools --profile monitoring up -d
+#
+# Stop all services:
+#   docker-compose down
+#
+# Stop and remove volumes:
+#   docker-compose down -v
+#
+# View logs:
+#   docker-compose logs -f
+#
+# View logs for specific service:
+#   docker-compose logs -f postgres
+#
+# Access services:
+#   PostgreSQL: localhost:5432
+#   Redis: localhost:6379
+#   Pulsar Broker: localhost:6650
+#   Pulsar Admin: http://localhost:8080
+#   Temporal gRPC: localhost:7233
+#   Temporal UI: http://localhost:8088
+#   PGAdmin: http://localhost:5050 (with --profile tools)
+#   Redis Commander: http://localhost:8081 (with --profile tools)
+#   Prometheus: http://localhost:9090 (with --profile monitoring)
+#   Grafana: http://localhost:3000 (with --profile monitoring)

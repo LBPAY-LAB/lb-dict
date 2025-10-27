@@ -1,0 +1,207 @@
+# Makefile for running Core-Dict tests
+# Append to existing Makefile or run separately
+
+.PHONY: test-all test-unit test-integration test-e2e test-performance test-coverage
+
+# ========================================
+# Test Commands
+# ========================================
+
+# Run all tests
+test-all: test-unit test-integration test-e2e
+	@echo "✓ All tests completed"
+
+# Run unit tests only
+test-unit:
+	@echo "Running unit tests..."
+	go test -v -short -race ./internal/... ./pkg/...
+
+# Run integration tests (uses testcontainers)
+test-integration:
+	@echo "Running integration tests..."
+	@echo "⚠️  This will start Docker containers via testcontainers"
+	go test -v -timeout 10m ./tests/integration/...
+
+# Run specific integration test
+test-integration-entry:
+	go test -v -timeout 5m ./tests/integration -run TestIntegration_Entry
+
+test-integration-claim:
+	go test -v -timeout 5m ./tests/integration -run TestIntegration_Claim
+
+test-integration-database:
+	go test -v -timeout 5m ./tests/integration -run TestIntegration_PostgreSQL
+
+test-integration-cache:
+	go test -v -timeout 5m ./tests/integration -run TestIntegration_Redis
+
+# ========================================
+# E2E Test Commands
+# ========================================
+
+# Setup E2E environment
+test-e2e-setup:
+	@echo "Starting E2E test environment..."
+	docker-compose -f docker-compose.test.yml up -d
+	@echo "Waiting for services to be healthy (60s)..."
+	sleep 60
+	@echo "✓ E2E environment ready"
+
+# Run E2E tests (requires test-e2e-setup first)
+test-e2e:
+	@echo "Running E2E tests..."
+	@echo "⚠️  Ensure services are running (make test-e2e-setup)"
+	go test -v -timeout 15m ./tests/e2e/... -args -test.short=false
+
+# Run specific E2E test
+test-e2e-entry:
+	go test -v -timeout 10m ./tests/e2e -run TestE2E_CreateEntry
+
+test-e2e-claim:
+	go test -v -timeout 10m ./tests/e2e -run TestE2E_ClaimWorkflow
+
+test-e2e-integration:
+	go test -v -timeout 10m ./tests/e2e -run TestE2E_Core_Connect_Bridge
+
+# Teardown E2E environment
+test-e2e-teardown:
+	@echo "Stopping E2E test environment..."
+	docker-compose -f docker-compose.test.yml down -v
+	@echo "✓ E2E environment stopped"
+
+# Full E2E cycle
+test-e2e-full: test-e2e-setup test-e2e test-e2e-teardown
+
+# ========================================
+# Performance Test Commands
+# ========================================
+
+# Run performance tests
+test-performance:
+	@echo "Running performance tests..."
+	@echo "⚠️  This will generate significant load (1000 TPS)"
+	go test -v -timeout 30m ./tests/e2e -run TestE2E_Performance
+
+test-performance-tps:
+	go test -v -timeout 15m ./tests/e2e -run TestE2E_Performance_CreateEntry_1000TPS
+
+test-performance-concurrent:
+	go test -v -timeout 15m ./tests/e2e -run TestE2E_Performance_Concurrent_Claims
+
+# ========================================
+# Coverage Commands
+# ========================================
+
+# Generate test coverage report
+test-coverage:
+	@echo "Generating coverage report..."
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "✓ Coverage report generated: coverage.html"
+	@echo ""
+	@echo "Coverage summary:"
+	go tool cover -func=coverage.out | grep total
+
+# View coverage in browser
+test-coverage-view: test-coverage
+	open coverage.html
+
+# Upload coverage to Codecov (CI)
+test-coverage-upload:
+	bash <(curl -s https://codecov.io/bash) -f coverage.out
+
+# ========================================
+# Benchmark Commands
+# ========================================
+
+# Run benchmarks
+test-bench:
+	@echo "Running benchmarks..."
+	go test -bench=. -benchmem -run=^$$ ./...
+
+test-bench-integration:
+	go test -bench=. -benchmem ./tests/integration/...
+
+# ========================================
+# CI Commands
+# ========================================
+
+# CI: Run tests without Docker
+test-ci-unit:
+	go test -v -short -race -coverprofile=coverage-unit.out ./internal/... ./pkg/...
+
+# CI: Run integration tests with testcontainers
+test-ci-integration:
+	go test -v -timeout 15m -coverprofile=coverage-integration.out ./tests/integration/...
+
+# CI: Run E2E tests (assumes services started by CI)
+test-e2e-ci:
+	@echo "Running E2E tests in CI..."
+	docker-compose -f docker-compose.test.yml up -d
+	@echo "Waiting for services..."
+	./scripts/wait-for-services.sh
+	go test -v -timeout 20m ./tests/e2e/...
+	docker-compose -f docker-compose.test.yml down -v
+
+# ========================================
+# Utility Commands
+# ========================================
+
+# Clean test artifacts
+test-clean:
+	rm -f coverage.out coverage.html coverage-*.out
+	docker-compose -f docker-compose.test.yml down -v
+	@echo "✓ Test artifacts cleaned"
+
+# Show test status
+test-status:
+	@echo "=== Test Status ==="
+	@echo "Unit tests:        go test -short ./internal/... ./pkg/..."
+	@echo "Integration tests: 35 tests in ./tests/integration/"
+	@echo "E2E tests:         15 tests in ./tests/e2e/"
+	@echo ""
+	@echo "E2E Environment:"
+	@docker-compose -f docker-compose.test.yml ps || echo "Not running"
+
+# Lint tests
+test-lint:
+	golangci-lint run ./tests/...
+
+# ========================================
+# Development Commands
+# ========================================
+
+# Watch tests (requires entr)
+test-watch:
+	find . -name "*.go" | entr -c make test-unit
+
+# Run tests with race detector
+test-race:
+	go test -race -short ./...
+
+# Run tests with verbose output and fail fast
+test-verbose:
+	go test -v -failfast ./tests/...
+
+# ========================================
+# Documentation
+# ========================================
+
+test-docs:
+	@cat tests/README.md
+
+# ========================================
+# Examples
+# ========================================
+
+# Example: Run specific test
+# make test-integration-entry
+
+# Example: Full E2E cycle
+# make test-e2e-full
+
+# Example: Generate coverage
+# make test-coverage-view
+
+# Example: Performance test
+# make test-performance-tps

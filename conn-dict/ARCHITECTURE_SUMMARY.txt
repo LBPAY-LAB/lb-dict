@@ -1,0 +1,259 @@
+================================================================================
+               CLEAN ARCHITECTURE SETUP - CONN-DICT SERVICE
+                        Task: CONNECT-002 COMPLETED
+================================================================================
+
+STATUS: ✅ SUCCESS - Clean Architecture + DDD structure created
+
+================================================================================
+📊 STATISTICS
+================================================================================
+
+Total Go Files:      25
+Total Directories:   16  
+Lines of Code:       2,383
+Packages:            11
+Layers:              4 + Workflows
+
+================================================================================
+🏗️  ARCHITECTURE LAYERS
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          LAYER 1: API (gRPC)                             │
+│  - grpc/server.go                                                        │
+│  - handlers/claim_handler.go (CreateClaim, ConfirmClaim, CancelClaim)   │
+│  - handlers/vsync_handler.go (SyncEntry, ProcessVsyncBatch)             │
+│                                                                           │
+│  Purpose: External communication, request/response handling              │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    LAYER 2: APPLICATION (Use Cases)                      │
+│  - usecases/claim_usecase.go (Business orchestration)                   │
+│  - usecases/vsync_usecase.go (Sync orchestration)                       │
+│  - commands/claim_commands.go (CreateClaim, ConfirmClaim, CancelClaim)  │
+│  - commands/vsync_commands.go (SyncEntry, ProcessVsyncBatch)            │
+│                                                                           │
+│  Purpose: Business logic coordination, transaction boundaries            │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   LAYER 3: DOMAIN (Business Logic)                       │
+│                                                                           │
+│  AGGREGATES (Aggregate Roots):                                           │
+│    - aggregates/claim.go                                                 │
+│      States: PENDING → CONFIRMED/CANCELLED/EXPIRED                       │
+│      Methods: Confirm(), Cancel(), MarkAsExpired()                       │
+│                                                                           │
+│    - aggregates/vsync_entry.go                                           │
+│      States: PENDING → IN_PROGRESS → COMPLETED/FAILED                    │
+│      Methods: StartSync(), CompleteSync(), FailSync()                    │
+│                                                                           │
+│  EVENTS (Domain Events):                                                 │
+│    - events/claim_events.go                                              │
+│      ClaimCreated, ClaimConfirmed, ClaimCancelled, ClaimExpired         │
+│                                                                           │
+│    - events/vsync_events.go                                              │
+│      VsyncEntryCreated, VsyncStarted, VsyncCompleted, VsyncFailed       │
+│                                                                           │
+│  INTERFACES (Ports):                                                     │
+│    - interfaces/repositories.go (ClaimRepo, VsyncRepo)                  │
+│    - interfaces/temporal.go (TemporalClient)                            │
+│    - interfaces/event_publisher.go (EventPublisher)                     │
+│    - interfaces/cache.go (CacheRepository)                              │
+│                                                                           │
+│  Purpose: Pure business logic, framework-agnostic                        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ▲
+┌─────────────────────────────────────────────────────────────────────────┐
+│              LAYER 4: INFRASTRUCTURE (External Services)                 │
+│                                                                           │
+│  TEMPORAL:                                                               │
+│    - temporal/client.go (Workflow execution)                            │
+│    - temporal/worker.go (Activity registration)                         │
+│                                                                           │
+│  DATABASE:                                                               │
+│    - database/postgres_claim_repository.go                              │
+│    - database/postgres_vsync_repository.go                              │
+│                                                                           │
+│  CACHE:                                                                  │
+│    - cache/redis_repository.go                                          │
+│                                                                           │
+│  MESSAGE BROKER:                                                         │
+│    - pulsar/event_publisher.go                                          │
+│                                                                           │
+│  Purpose: External adapters, data persistence, messaging                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    WORKFLOWS (Temporal Orchestration)                    │
+│                                                                           │
+│  - workflows/claim_workflow.go                                           │
+│    • ClaimWorkflow (7-day expiration, signal handling)                  │
+│    • CancelClaimWorkflow                                                │
+│                                                                           │
+│  - workflows/vsync_workflow.go                                           │
+│    • VsyncWorkflow (single entry sync)                                  │
+│    • VsyncBatchWorkflow (parallel processing)                           │
+│    • ScheduledVsyncWorkflow (periodic scheduler)                        │
+│                                                                           │
+│  Features: Retries, parallel execution, timeouts, signals               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+📦 DDD PATTERNS IMPLEMENTED
+================================================================================
+
+✓ Aggregates       - Claim, VsyncEntry (consistency boundaries)
+✓ Domain Events    - ClaimCreated, VsyncCompleted, etc.
+✓ Commands         - CreateClaim, SyncEntry (intent)
+✓ Repositories     - Interface segregation, aggregate-focused
+✓ Ports & Adapters - Clean dependency inversion
+
+================================================================================
+📁 DIRECTORY STRUCTURE
+================================================================================
+
+conn-dict/
+├── internal/
+│   ├── api/
+│   │   └── grpc/
+│   │       ├── server.go
+│   │       └── handlers/
+│   │           ├── claim_handler.go
+│   │           └── vsync_handler.go
+│   │
+│   ├── application/
+│   │   ├── usecases/
+│   │   │   ├── claim_usecase.go
+│   │   │   └── vsync_usecase.go
+│   │   └── commands/
+│   │       ├── claim_commands.go
+│   │       └── vsync_commands.go
+│   │
+│   ├── domain/
+│   │   ├── aggregates/
+│   │   │   ├── claim.go
+│   │   │   └── vsync_entry.go
+│   │   ├── events/
+│   │   │   ├── claim_events.go
+│   │   │   └── vsync_events.go
+│   │   └── interfaces/
+│   │       ├── repositories.go
+│   │       ├── temporal.go
+│   │       ├── event_publisher.go
+│   │       └── cache.go
+│   │
+│   └── infrastructure/
+│       ├── temporal/
+│       │   ├── client.go
+│       │   ├── worker.go
+│       │   ├── config.go
+│       │   └── logger.go
+│       ├── database/
+│       │   ├── postgres_claim_repository.go
+│       │   └── postgres_vsync_repository.go
+│       ├── cache/
+│       │   └── redis_repository.go
+│       └── pulsar/
+│           └── event_publisher.go
+│
+└── workflows/
+    ├── claim_workflow.go
+    └── vsync_workflow.go
+
+================================================================================
+📦 DEPENDENCIES
+================================================================================
+
+✓ go.mod updated with dict-contracts dependency
+
+Key dependencies:
+  - github.com/lbpay-lab/dict-contracts v0.1.0  ← NEW
+  - go.temporal.io/sdk v1.36.0
+  - github.com/apache/pulsar-client-go v0.16.0
+  - github.com/redis/go-redis/v9 v9.14.1
+  - google.golang.org/grpc v1.70.0
+  - google.golang.org/protobuf v1.36.3
+
+================================================================================
+✅ ACCEPTANCE CRITERIA
+================================================================================
+
+[✓] 4 layers created (api, application, domain, infrastructure)
+[✓] workflows/ directory with Temporal workflows
+[✓] Skeleton files with proper interfaces
+[✓] DDD patterns: Aggregates, Events, Commands
+[✓] Repository interfaces and implementations
+[✓] Temporal client and worker setup
+[✓] go.mod references dict-contracts
+[✓] Clean separation of concerns
+[✓] Hexagonal architecture (ports and adapters)
+
+================================================================================
+🎯 KEY FEATURES
+================================================================================
+
+Clean Architecture:
+  ✓ Testability - Each layer independently testable
+  ✓ Maintainability - Clear separation of concerns
+  ✓ Flexibility - Easy to swap implementations
+  ✓ Scalability - Layers evolve independently
+  ✓ Framework Independence - Pure domain logic
+
+DDD Benefits:
+  ✓ Business-Centric - Code reflects business language
+  ✓ Consistency - Aggregates enforce invariants
+  ✓ Traceability - Domain events track changes
+  ✓ Intent - Commands express clear intentions
+  ✓ Modularity - Bounded contexts isolation
+
+Temporal Integration:
+  ✓ Durability - Workflows survive failures
+  ✓ Observability - Full execution history
+  ✓ Reliability - Automatic retries
+  ✓ Scalability - Parallel execution
+  ✓ Timeouts - Long-running process management
+
+================================================================================
+🚀 NEXT STEPS
+================================================================================
+
+Integration:
+  1. Wire up dependency injection in cmd/server/main.go
+  2. Implement gRPC service registration with dict-contracts proto
+  3. Add PostgreSQL migrations for aggregates
+  4. Configure Pulsar topics and subscriptions
+  5. Implement activity functions for workflows
+
+Testing:
+  1. Unit tests for aggregates (business logic)
+  2. Integration tests for repositories
+  3. Contract tests for gRPC handlers
+  4. Workflow replay tests for Temporal
+
+Observability:
+  1. Add structured logging with correlation IDs
+  2. Implement OpenTelemetry tracing
+  3. Define Prometheus metrics
+  4. Create health check endpoints
+
+================================================================================
+📝 ARCHITECTURE PRINCIPLES APPLIED
+================================================================================
+
+1. Dependency Rule - Dependencies point inward (domain has no dependencies)
+2. Single Responsibility - Each layer has one reason to change
+3. Interface Segregation - Small, focused interfaces
+4. Dependency Inversion - Abstractions over implementations
+5. Open/Closed - Open for extension, closed for modification
+
+================================================================================
+
+                    🎉 CLEAN ARCHITECTURE SETUP COMPLETE 🎉
+
+        The conn-dict service is now structured for scalable DICT operations
+              with Clean Architecture + DDD + Temporal patterns
+
+================================================================================

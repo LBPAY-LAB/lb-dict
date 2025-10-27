@@ -1,0 +1,24 @@
+# conn-bridge Configuration Example
+# Copy this file to config.yaml and adjust the values
+
+# Bacen DICT API Configuration
+bacen_base_url: "https://api-dict.bcb.gov.br"
+bacen_timeout: "30s"
+bacen_api_key: "your-api-key-here"
+bacen_cert_path: "/path/to/client-cert.pem"
+bacen_key_path: "/path/to/client-key.pem"
+
+# Apache Pulsar Configuration
+pulsar_broker_url: "pulsar://localhost:6650"
+pulsar_timeout: "30s"
+
+# Circuit Breaker Configuration
+circuit_breaker_name: "bacen-circuit-breaker"
+circuit_breaker_max_retry: 3
+circuit_breaker_timeout: "30s"
+
+# gRPC Server Configuration
+grpc_port: 50051
+
+# Logging Configuration (via environment)
+# LOG_LEVEL: debug|info|warn|error (default: info)

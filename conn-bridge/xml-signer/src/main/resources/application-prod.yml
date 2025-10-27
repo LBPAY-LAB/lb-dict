@@ -1,0 +1,11 @@
+# Production profile configuration
+server:
+  port: 8080
+
+app:
+  dev-mode: false
+
+logging:
+  level:
+    root: WARN
+    com.lbpay.xmlsigner: INFO

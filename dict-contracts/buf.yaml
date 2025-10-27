@@ -1,0 +1,26 @@
+version: v1
+name: buf.build/lbpay/dict-contracts
+deps:
+  - buf.build/googleapis/googleapis  # Para google.protobuf.Timestamp, Empty
+
+lint:
+  use:
+    - DEFAULT
+    - COMMENTS
+    - FILE_LOWER_SNAKE_CASE
+  except:
+    - UNARY_RPC  # Permitir unary RPCs
+  ignore:
+    - proto/common.proto
+    - proto/core_dict.proto
+    - proto/bridge.proto
+
+breaking:
+  use:
+    - FILE
+  except:
+    - FIELD_SAME_LABEL  # Permitir optional → required (em desenvolvimento)
+  ignore:
+    - proto/common.proto
+    - proto/core_dict.proto
+    - proto/bridge.proto

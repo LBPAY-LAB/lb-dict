@@ -1,0 +1,601 @@
+syntax = "proto3";
+
+package dict.connect.v1;
+
+option go_package = "github.com/lbpay-lab/dict-contracts/gen/proto/connect/v1;connectv1";
+
+import "proto/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ====================================================================
+// CONNECT SERVICE - Core DICT → Connect (gRPC)
+// ====================================================================
+// Este serviço permite ao Core DICT chamar o Connect para operações
+// síncronas (queries < 50ms) e assíncronas (via Temporal workflows).
+//
+// Operações síncronas: GetEntry, ListEntries, GetClaim, ListClaims
+// Operações assíncronas: CreateEntry, UpdateEntry, DeleteEntry (via Pulsar)
+// ====================================================================
+
+service ConnectService {
+  // ========== Entry Operations (Read-Only - Síncronas) ==========
+
+  // Buscar entry por ID
+  rpc GetEntry(GetEntryRequest) returns (GetEntryResponse);
+
+  // Buscar entry por chave DICT
+  rpc GetEntryByKey(GetEntryByKeyRequest) returns (GetEntryByKeyResponse);
+
+  // Listar entries de um participante (ISPB)
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+
+  // ========== Claim Operations ==========
+
+  // Criar nova claim (inicia ClaimWorkflow de 30 dias)
+  rpc CreateClaim(CreateClaimRequest) returns (CreateClaimResponse);
+
+  // Confirmar claim (owner aceita a reivindicação)
+  rpc ConfirmClaim(ConfirmClaimRequest) returns (ConfirmClaimResponse);
+
+  // Cancelar claim (owner rejeita ou claimer desiste)
+  rpc CancelClaim(CancelClaimRequest) returns (CancelClaimResponse);
+
+  // Buscar claim por ID
+  rpc GetClaim(GetClaimRequest) returns (GetClaimResponse);
+
+  // Listar claims (com filtros)
+  rpc ListClaims(ListClaimsRequest) returns (ListClaimsResponse);
+
+  // ========== Infraction Operations ==========
+
+  // Criar nova infração (inicia InfractionWorkflow)
+  rpc CreateInfraction(CreateInfractionRequest) returns (CreateInfractionResponse);
+
+  // Investigar infração (analista toma decisão)
+  rpc InvestigateInfraction(InvestigateInfractionRequest) returns (InvestigateInfractionResponse);
+
+  // Resolver infração (marca como resolvida)
+  rpc ResolveInfraction(ResolveInfractionRequest) returns (ResolveInfractionResponse);
+
+  // Descartar infração (marca como sem fundamento)
+  rpc DismissInfraction(DismissInfractionRequest) returns (DismissInfractionResponse);
+
+  // Buscar infração por ID
+  rpc GetInfraction(GetInfractionRequest) returns (GetInfractionResponse);
+
+  // Listar infrações (com filtros)
+  rpc ListInfractions(ListInfractionsRequest) returns (ListInfractionsResponse);
+
+  // ========== Health Check ==========
+
+  // Health check do Connect (verifica conectividade com Bridge, Temporal, Pulsar)
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+// ====================================================================
+// ENTRY OPERATIONS - Messages (Read-Only)
+// ====================================================================
+
+message GetEntryRequest {
+  // ID da entry (UUID)
+  string entry_id = 1;
+
+  // Request ID para rastreamento
+  string request_id = 2;
+}
+
+message GetEntryResponse {
+  // Entry encontrada
+  Entry entry = 1;
+
+  // Entry foi encontrada?
+  bool found = 2;
+}
+
+message GetEntryByKeyRequest {
+  // Chave DICT a buscar
+  dict.common.v1.DictKey key = 1;
+
+  // Request ID
+  string request_id = 2;
+}
+
+message GetEntryByKeyResponse {
+  // Entry encontrada
+  Entry entry = 1;
+
+  // Entry foi encontrada?
+  bool found = 2;
+}
+
+message ListEntriesRequest {
+  // ISPB do participante
+  string participant_ispb = 1;
+
+  // Filtros opcionais
+  optional dict.common.v1.KeyType key_type = 2;
+  optional dict.common.v1.EntryStatus status = 3;
+
+  // Paginação
+  int32 limit = 4;   // Default: 100, Max: 1000
+  int32 offset = 5;  // Default: 0
+
+  // Request ID
+  string request_id = 6;
+}
+
+message ListEntriesResponse {
+  // Lista de entries
+  repeated Entry entries = 1;
+
+  // Total de entries (para paginação)
+  int32 total_count = 2;
+
+  // Paginação
+  int32 limit = 3;
+  int32 offset = 4;
+  bool has_more = 5;
+}
+
+// Entry - Representação completa de uma chave DICT
+message Entry {
+  // ID interno (UUID)
+  string entry_id = 1;
+
+  // Participant ISPB (owner)
+  string participant_ispb = 2;
+
+  // Chave DICT
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // Conta vinculada
+  dict.common.v1.Account account = 5;
+
+  // Status
+  dict.common.v1.EntryStatus status = 6;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+
+  // Soft delete (se status = DELETED)
+  optional google.protobuf.Timestamp deleted_at = 9;
+}
+
+// ====================================================================
+// CLAIM OPERATIONS - Messages (30 dias)
+// ====================================================================
+
+message CreateClaimRequest {
+  // ID da entry a ser reivindicada
+  string entry_id = 1;
+
+  // ISPB do reivindicador (claimer)
+  string claimer_ispb = 2;
+
+  // ISPB do dono atual (owner)
+  string owner_ispb = 3;
+
+  // Conta do reivindicador (destino da chave)
+  dict.common.v1.Account claimer_account = 4;
+
+  // Claim type
+  enum ClaimType {
+    CLAIM_TYPE_UNSPECIFIED = 0;
+    CLAIM_TYPE_OWNERSHIP = 1;    // Reivindicação de posse
+    CLAIM_TYPE_PORTABILITY = 2;  // Portabilidade de conta
+  }
+  ClaimType claim_type = 5;
+
+  // Request ID
+  string request_id = 6;
+}
+
+message CreateClaimResponse {
+  // ID da claim criada (UUID)
+  string claim_id = 1;
+
+  // ID da entry
+  string entry_id = 2;
+
+  // Status inicial (sempre OPEN)
+  dict.common.v1.ClaimStatus status = 3;
+
+  // Data de expiração (created_at + 30 dias)
+  google.protobuf.Timestamp expires_at = 4;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 5;
+
+  // Mensagem para o usuário
+  string message = 6;
+}
+
+message ConfirmClaimRequest {
+  // ID da claim a confirmar
+  string claim_id = 1;
+
+  // Razão da confirmação (opcional)
+  optional string reason = 2;
+
+  // Request ID
+  string request_id = 3;
+}
+
+message ConfirmClaimResponse {
+  // ID da claim
+  string claim_id = 1;
+
+  // Novo status (CONFIRMED)
+  dict.common.v1.ClaimStatus status = 2;
+
+  // Entry atualizado (agora pertence ao claimer)
+  Entry updated_entry = 3;
+
+  // Timestamp de confirmação
+  google.protobuf.Timestamp confirmed_at = 4;
+
+  // Mensagem para o usuário
+  string message = 5;
+}
+
+message CancelClaimRequest {
+  // ID da claim a cancelar
+  string claim_id = 1;
+
+  // Razão do cancelamento
+  string reason = 2;
+
+  // Request ID
+  string request_id = 3;
+}
+
+message CancelClaimResponse {
+  // ID da claim
+  string claim_id = 1;
+
+  // Novo status (CANCELLED)
+  dict.common.v1.ClaimStatus status = 2;
+
+  // Timestamp de cancelamento
+  google.protobuf.Timestamp cancelled_at = 3;
+
+  // Mensagem para o usuário
+  string message = 4;
+}
+
+message GetClaimRequest {
+  // ID da claim
+  string claim_id = 1;
+
+  // Request ID
+  string request_id = 2;
+}
+
+message GetClaimResponse {
+  // Claim encontrada
+  Claim claim = 1;
+
+  // Claim foi encontrada?
+  bool found = 2;
+}
+
+message ListClaimsRequest {
+  // Filtros opcionais
+  optional string entry_id = 1;            // Filtrar por entry
+  optional string claimer_ispb = 2;        // Filtrar por claimer
+  optional string owner_ispb = 3;          // Filtrar por owner
+  optional dict.common.v1.ClaimStatus status = 4;  // Filtrar por status
+
+  // Paginação
+  int32 limit = 5;   // Default: 100, Max: 1000
+  int32 offset = 6;  // Default: 0
+
+  // Request ID
+  string request_id = 7;
+}
+
+message ListClaimsResponse {
+  // Lista de claims
+  repeated Claim claims = 1;
+
+  // Total de claims (para paginação)
+  int32 total_count = 2;
+
+  // Paginação
+  int32 limit = 3;
+  int32 offset = 4;
+  bool has_more = 5;
+}
+
+// Claim - Representação completa de uma reivindicação
+message Claim {
+  // ID da claim (UUID)
+  string claim_id = 1;
+
+  // ID da entry reivindicada
+  string entry_id = 2;
+
+  // Chave reivindicada
+  dict.common.v1.KeyType key_type = 3;
+  string key_value = 4;
+
+  // ISPBs
+  string claimer_ispb = 5;  // Quem está reivindicando
+  string owner_ispb = 6;    // Dono atual
+
+  // Tipo de claim
+  enum ClaimType {
+    CLAIM_TYPE_UNSPECIFIED = 0;
+    CLAIM_TYPE_OWNERSHIP = 1;
+    CLAIM_TYPE_PORTABILITY = 2;
+  }
+  ClaimType claim_type = 7;
+
+  // Status
+  dict.common.v1.ClaimStatus status = 8;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp expires_at = 10;
+  optional google.protobuf.Timestamp completed_at = 11;
+
+  // Tempo restante (dias)
+  int32 days_remaining = 12;
+}
+
+// ====================================================================
+// INFRACTION OPERATIONS - Messages
+// ====================================================================
+
+message CreateInfractionRequest {
+  // Chave sob infração
+  dict.common.v1.DictKey key = 1;
+
+  // ISPB do participante sob infração
+  string participant_ispb = 2;
+
+  // Tipo de infração
+  enum InfractionType {
+    INFRACTION_TYPE_UNSPECIFIED = 0;
+    INFRACTION_TYPE_FRAUD = 1;                // Fraude
+    INFRACTION_TYPE_ACCOUNT_CLOSED = 2;       // Conta encerrada
+    INFRACTION_TYPE_INVALID_ACCOUNT = 3;      // Conta inválida
+    INFRACTION_TYPE_DUPLICATE_KEY = 4;        // Chave duplicada
+    INFRACTION_TYPE_INCORRECT_OWNERSHIP = 5;  // Titularidade incorreta
+  }
+  InfractionType infraction_type = 3;
+
+  // Descrição da infração
+  string description = 4;
+
+  // ISPB do reportador (quem reportou)
+  string reporter_ispb = 5;
+
+  // Request ID
+  string request_id = 6;
+}
+
+message CreateInfractionResponse {
+  // ID da infração criada (UUID)
+  string infraction_id = 1;
+
+  // Status inicial (sempre REPORTED)
+  InfractionStatus status = 2;
+
+  // Timestamp de criação
+  google.protobuf.Timestamp created_at = 3;
+
+  // Mensagem para o usuário
+  string message = 4;
+}
+
+message InvestigateInfractionRequest {
+  // ID da infração a investigar
+  string infraction_id = 1;
+
+  // Decisão do analista
+  enum InvestigationDecision {
+    INVESTIGATION_DECISION_UNSPECIFIED = 0;
+    INVESTIGATION_DECISION_PROCEED = 1;  // Proceder com resolução
+    INVESTIGATION_DECISION_DISMISS = 2;  // Descartar (sem fundamento)
+  }
+  InvestigationDecision decision = 2;
+
+  // Notas do analista
+  string analyst_notes = 3;
+
+  // Request ID
+  string request_id = 4;
+}
+
+message InvestigateInfractionResponse {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Novo status (UNDER_INVESTIGATION ou DISMISSED)
+  InfractionStatus status = 2;
+
+  // Timestamp da investigação
+  google.protobuf.Timestamp investigated_at = 3;
+
+  // Mensagem para o usuário
+  string message = 4;
+}
+
+message ResolveInfractionRequest {
+  // ID da infração a resolver
+  string infraction_id = 1;
+
+  // Resolução aplicada
+  string resolution = 2;
+
+  // Request ID
+  string request_id = 3;
+}
+
+message ResolveInfractionResponse {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Novo status (RESOLVED)
+  InfractionStatus status = 2;
+
+  // Timestamp da resolução
+  google.protobuf.Timestamp resolved_at = 3;
+
+  // Mensagem para o usuário
+  string message = 4;
+}
+
+message DismissInfractionRequest {
+  // ID da infração a descartar
+  string infraction_id = 1;
+
+  // Razão do descarte
+  string reason = 2;
+
+  // Request ID
+  string request_id = 3;
+}
+
+message DismissInfractionResponse {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Novo status (DISMISSED)
+  InfractionStatus status = 2;
+
+  // Timestamp do descarte
+  google.protobuf.Timestamp dismissed_at = 3;
+
+  // Mensagem para o usuário
+  string message = 4;
+}
+
+message GetInfractionRequest {
+  // ID da infração
+  string infraction_id = 1;
+
+  // Request ID
+  string request_id = 2;
+}
+
+message GetInfractionResponse {
+  // Infração encontrada
+  Infraction infraction = 1;
+
+  // Infração foi encontrada?
+  bool found = 2;
+}
+
+message ListInfractionsRequest {
+  // Filtros opcionais
+  optional string participant_ispb = 1;  // Filtrar por participante
+  optional InfractionStatus status = 2;  // Filtrar por status
+
+  // Paginação
+  int32 limit = 3;   // Default: 100, Max: 1000
+  int32 offset = 4;  // Default: 0
+
+  // Request ID
+  string request_id = 5;
+}
+
+message ListInfractionsResponse {
+  // Lista de infrações
+  repeated Infraction infractions = 1;
+
+  // Total de infrações (para paginação)
+  int32 total_count = 2;
+
+  // Paginação
+  int32 limit = 3;
+  int32 offset = 4;
+  bool has_more = 5;
+}
+
+// InfractionStatus - Status de uma infração
+enum InfractionStatus {
+  INFRACTION_STATUS_UNSPECIFIED = 0;
+  INFRACTION_STATUS_REPORTED = 1;           // Reportada (inicial)
+  INFRACTION_STATUS_UNDER_INVESTIGATION = 2; // Em investigação
+  INFRACTION_STATUS_RESOLVED = 3;           // Resolvida
+  INFRACTION_STATUS_DISMISSED = 4;          // Descartada (sem fundamento)
+}
+
+// Infraction - Representação completa de uma infração
+message Infraction {
+  // ID da infração (UUID)
+  string infraction_id = 1;
+
+  // Chave sob infração
+  dict.common.v1.KeyType key_type = 2;
+  string key_value = 3;
+
+  // ISPB do participante sob infração
+  string participant_ispb = 4;
+
+  // Tipo de infração
+  enum InfractionType {
+    INFRACTION_TYPE_UNSPECIFIED = 0;
+    INFRACTION_TYPE_FRAUD = 1;
+    INFRACTION_TYPE_ACCOUNT_CLOSED = 2;
+    INFRACTION_TYPE_INVALID_ACCOUNT = 3;
+    INFRACTION_TYPE_DUPLICATE_KEY = 4;
+    INFRACTION_TYPE_INCORRECT_OWNERSHIP = 5;
+  }
+  InfractionType infraction_type = 5;
+
+  // Descrição da infração
+  string description = 6;
+
+  // ISPB do reportador
+  string reporter_ispb = 7;
+
+  // Status
+  InfractionStatus status = 8;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at = 9;
+  optional google.protobuf.Timestamp investigated_at = 10;
+  optional google.protobuf.Timestamp resolved_at = 11;
+
+  // Notas do analista (se investigada)
+  optional string analyst_notes = 12;
+
+  // Resolução aplicada (se resolvida)
+  optional string resolution = 13;
+}
+
+// ====================================================================
+// HEALTH CHECK
+// ====================================================================
+
+message HealthCheckResponse {
+  enum HealthStatus {
+    HEALTH_STATUS_UNSPECIFIED = 0;
+    HEALTH_STATUS_HEALTHY = 1;
+    HEALTH_STATUS_DEGRADED = 2;
+    HEALTH_STATUS_UNHEALTHY = 3;
+  }
+  HealthStatus status = 1;
+
+  // Componentes
+  ComponentHealth postgresql = 2;
+  ComponentHealth redis = 3;
+  ComponentHealth temporal = 4;
+  ComponentHealth pulsar = 5;
+  ComponentHealth bridge = 6;
+
+  // Timestamp do health check
+  google.protobuf.Timestamp checked_at = 7;
+}
+
+message ComponentHealth {
+  bool reachable = 1;
+  int64 latency_ms = 2;
+  optional string error = 3;
+}

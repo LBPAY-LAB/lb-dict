@@ -1,0 +1,51 @@
+# Temporal Dynamic Configuration for Development
+# This file contains development-specific settings for Temporal Server
+
+# Enable verbose logging
+system.enableVerboseLogging:
+  - value: true
+    constraints: {}
+
+# History service settings
+history.maxAutoResetPoints:
+  - value: 20
+    constraints: {}
+
+# Matching service settings
+matching.numTaskqueueReadPartitions:
+  - value: 5
+    constraints: {}
+
+matching.numTaskqueueWritePartitions:
+  - value: 5
+    constraints: {}
+
+# Frontend service settings
+frontend.enableClientVersionCheck:
+  - value: false
+    constraints: {}
+
+# Worker service settings
+worker.replicatorConcurrency:
+  - value: 10
+    constraints: {}
+
+# Retention settings
+system.defaultWorkflowRetentionPeriod:
+  - value: "30d"
+    constraints: {}
+
+# Visibility settings
+system.advancedVisibilityWritingMode:
+  - value: "on"
+    constraints: {}
+
+# Rate limiting (relaxed for development)
+frontend.rps:
+  - value: 10000
+    constraints: {}
+
+# Maximum allowed workflow execution time
+limit.maxIDLength:
+  - value: 1000
+    constraints: {}

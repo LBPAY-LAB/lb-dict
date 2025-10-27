@@ -1,0 +1,99 @@
+conn-dict/
+├── README.md                   # Documentacao principal do projeto
+├── LICENSE                     # Licenca proprietaria LBPay
+├── CHANGELOG.md                # Historico de mudancas
+├── Makefile                    # Comandos make (build, test, run, docker-build)
+├── Dockerfile                  # Multi-stage build (connect + worker)
+├── docker-compose.yml          # Temporal, Pulsar, Redis, PostgreSQL
+├── .env.example                # Template de variaveis de ambiente
+├── .gitignore                  # Arquivos ignorados pelo Git
+├── .dockerignore               # Arquivos ignorados pelo Docker
+├── go.mod                      # Dependencias Go (Temporal v1.36.0, Pulsar v0.16.0)
+│
+├── cmd/                        # Entrypoints da aplicacao
+│   ├── connect/                # API/Consumer principal
+│   │   └── main.go            # [TODO] Implementar
+│   └── worker/                 # Temporal Workers
+│       └── main.go            # [TODO] Implementar
+│
+├── internal/                   # Codigo interno (nao exportado)
+│   ├── workflows/              # Temporal Workflows
+│   │   ├── claim_workflow.go  # [TODO] ClaimWorkflow (30 dias)
+│   │   ├── vsync_workflow.go  # [TODO] VSYNCWorkflow (planejado)
+│   │   └── otp_workflow.go    # [TODO] OTPWorkflow (planejado)
+│   │
+│   ├── activities/             # Temporal Activities
+│   │   ├── bridge/            # [TODO] Chamadas gRPC para Bridge
+│   │   ├── cache/             # [TODO] Operacoes Redis
+│   │   └── events/            # [TODO] Publicacao de eventos
+│   │
+│   ├── handlers/               # Handlers Pulsar/HTTP
+│   │   └── entry_handler.go   # [TODO] Handler de mensagens
+│   │
+│   ├── services/               # Logica de negocio
+│   │   ├── entry_service.go   # [TODO] Servico de entradas
+│   │   └── claim_service.go   # [TODO] Servico de claims
+│   │
+│   └── infrastructure/         # Adapters e clients
+│       ├── grpc/              # [TODO] Cliente gRPC Bridge
+│       ├── pulsar/            # [TODO] Consumer/Producer Pulsar
+│       └── redis/             # [TODO] Cliente Redis
+│
+├── pkg/                        # Codigo reutilizavel (exportado)
+│   ├── config/                # [TODO] Configuracao centralizada
+│   └── logger/                # [TODO] Logger estruturado
+│
+├── test/                       # Testes
+│   ├── integration/           # [TODO] Testes de integracao
+│   └── unit/                  # [TODO] Testes unitarios
+│
+├── api/                        # APIs e contratos
+│   └── proto/                 # [TODO] Definicoes Protocol Buffer
+│       └── .gitkeep
+│
+├── db/                         # Database
+│   └── migrations/            # [TODO] Migrations SQL
+│       └── .gitkeep
+│
+├── config/                     # Arquivos de configuracao
+│   ├── temporal/
+│   │   └── dynamicconfig/
+│   │       └── development-sql.yaml  # Config Temporal development
+│   └── otel/
+│       └── otel-collector-config.yaml  # Config OpenTelemetry
+│
+└── docs/                       # Documentacao adicional
+    ├── ARCHITECTURE.md         # Arquitetura detalhada
+    └── QUICKSTART.md           # Guia de inicio rapido
+
+---
+
+ARQUIVOS BASE CRIADOS: ✅
+- README.md
+- go.mod (module github.com/lbpay-lab/conn-dict, Go 1.24.5)
+- .env.example (TEMPORAL_HOST, PULSAR_URL, GRPC_PORT=9092, ADMIN_PORT=8081)
+- Makefile (targets: build, test, lint, run, docker-build)
+- Dockerfile (multi-stage: connect + worker)
+- docker-compose.yml (Temporal Server + UI, Pulsar, Redis, PostgreSQL, OpenTelemetry Collector)
+
+PROXIMOS PASSOS:
+1. Implementar cmd/connect/main.go (API/Consumer)
+2. Implementar cmd/worker/main.go (Temporal Worker)
+3. Implementar workflows/claim_workflow.go (ClaimWorkflow 30 dias)
+4. Implementar activities de Claims
+5. Implementar integracao Pulsar (consumer/producer)
+6. Implementar cliente gRPC para Bridge
+7. Adicionar testes unitarios e de integracao
+
+STACK TECNOLOGICA:
+- Go 1.24.5
+- Temporal v1.36.0
+- Apache Pulsar v0.16.0
+- Redis v9.14.1
+- PostgreSQL 15+
+- OpenTelemetry v1.38.0
+- gRPC (latest)
+
+REFERENCIAS:
+- TEC-003: /Users/jose.silva.lb/LBPay/IA_Dict/Artefatos/11_Especificacoes_Tecnicas/TEC-003_RSFN_Connect_Specification.md
+- IMP-002: /Users/jose.silva.lb/LBPay/IA_Dict/Artefatos/09_Implementacao/IMP-002_Manual_Implementacao_Connect.md

@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  # Temporal Server
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: conn-dict-temporal
+    depends_on:
+      - temporal-postgres
+      - temporal-elasticsearch
+    environment:
+      - DB=postgres12_pgx
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+      - ENABLE_ES=true
+      - ES_SEEDS=temporal-elasticsearch
+      - ES_VERSION=v7
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./config/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+
+  # Temporal UI
+  temporal-ui:
+    image: temporalio/ui:2.35.1
+    container_name: conn-dict-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_UI_PORT=8088
+    ports:
+      - "8088:8088"
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+
+  # PostgreSQL for Temporal
+  temporal-postgres:
+    image: postgres:16-alpine
+    container_name: conn-dict-temporal-postgres
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    ports:
+      - "5433:5432"
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch for Temporal
+  temporal-elasticsearch:
+    image: elasticsearch:7.17.10
+    container_name: conn-dict-temporal-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - temporal-elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Apache Pulsar (Standalone)
+  pulsar:
+    image: apachepulsar/pulsar:3.3.2
+    container_name: conn-dict-pulsar
+    command: bin/pulsar standalone
+    environment:
+      - PULSAR_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=512m
+    ports:
+      - "6650:6650"   # Pulsar binary protocol
+      - "8080:8080"   # Pulsar HTTP API
+    volumes:
+      - pulsar-data:/pulsar/data
+      - pulsar-conf:/pulsar/conf
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bin/pulsar-admin brokers healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis (Cache)
+  redis:
+    image: redis:7.4-alpine
+    container_name: conn-dict-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # PostgreSQL for Connect (CID Local - opcional)
+  connect-postgres:
+    image: postgres:15-alpine
+    container_name: conn-dict-postgres
+    environment:
+      POSTGRES_USER: connect
+      POSTGRES_PASSWORD: connect_password
+      POSTGRES_DB: rsfn_connect
+    ports:
+      - "5434:5432"
+    volumes:
+      - connect-postgres-data:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U connect"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # OpenTelemetry Collector (opcional para observabilidade)
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.1
+    container_name: conn-dict-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics
+    networks:
+      - conn-dict-network
+    restart: unless-stopped
+
+networks:
+  conn-dict-network:
+    driver: bridge
+    name: conn-dict-network
+
+volumes:
+  temporal-postgres-data:
+    driver: local
+  temporal-elasticsearch-data:
+    driver: local
+  pulsar-data:
+    driver: local
+  pulsar-conf:
+    driver: local
+  redis-data:
+    driver: local
+  connect-postgres-data:
+    driver: local

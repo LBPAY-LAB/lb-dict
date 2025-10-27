@@ -1,0 +1,11 @@
+# Development profile configuration
+server:
+  port: 8080
+
+app:
+  dev-mode: true
+
+logging:
+  level:
+    root: DEBUG
+    com.lbpay.xmlsigner: DEBUG
