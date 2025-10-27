@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: core-dict-config
+  namespace: dict-system
+  labels:
+    app: core-dict
+    version: v1.0.0
+data:
+  # Server Configuration
+  GRPC_PORT: "9090"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  APP_ENV: "production"
+
+  # Feature Flags
+  CORE_DICT_USE_MOCK_MODE: "false"
+
+  # Database Configuration
+  DB_PORT: "5432"
+  DB_NAME: "lbpay_core_dict"
+  DB_POOL_MIN: "10"
+  DB_POOL_MAX: "50"
+  DB_SSL_MODE: "require"
+  DB_MAX_CONN_LIFETIME_MIN: "30"
+  DB_MAX_CONN_IDLE_TIME_MIN: "10"
+
+  # Redis Configuration
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "100"
+  REDIS_MIN_IDLE_CONNS: "10"
+  REDIS_MAX_RETRIES: "3"
+
+  # Connect Service Configuration
+  CONNECT_ENABLED: "true"
+  CONNECT_TIMEOUT_SEC: "5"
+  CONNECT_MAX_RETRIES: "3"
+
+  # Pulsar Configuration
+  PULSAR_ENABLED: "true"
+  PULSAR_TOPIC_PREFIX: "dict.prod"
+  PULSAR_SUBSCRIPTION_NAME: "core-dict-consumer"
+
+  # Rate Limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_RPS: "1000"
+
+  # Circuit Breaker
+  CIRCUIT_BREAKER_ENABLED: "true"
+  CIRCUIT_BREAKER_THRESHOLD: "10"
+  CIRCUIT_BREAKER_TIMEOUT_SEC: "60"
+
+  # JWT Configuration
+  JWT_ISSUER: "lbpay-auth"
+  JWT_AUDIENCE: "core-dict"

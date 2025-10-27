@@ -18,6 +18,7 @@ import (
 	"github.com/lbpay-lab/core-dict/internal/application/commands"
 	"github.com/lbpay-lab/core-dict/internal/application/queries"
 	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/valueobjects"
 	"github.com/lbpay-lab/core-dict/internal/infrastructure/grpc/mappers"
 )
 
@@ -917,13 +918,13 @@ func (h *CoreDictServiceHandler) LookupKey(ctx context.Context, req *corev1.Look
 	h.logger.Info("LookupKey: success", "entry_id", entry.ID, "key_value", req.GetKey().GetKeyValue())
 	resp := &corev1.LookupKeyResponse{
 		Key:    req.GetKey(),
-		Status: mappers.MapDomainStatusToProto(entry.Status),
+		Status: mappers.MapDomainStatusToProto(valueobjects.KeyStatus(entry.Status)), // Convert entities.KeyStatus to valueobjects.KeyStatus
 	}
 
 	// Map account (public fields only)
 	if account != nil {
 		resp.Account = mappers.MapDomainAccountToProto(account)
-		resp.AccountHolderName = account.HolderName // Public field
+		resp.AccountHolderName = account.Owner.Name // Use Owner.Name from Account struct
 		// DO NOT include: CPF/CNPJ full, balance, sensitive fields
 	}
 
@@ -977,7 +978,7 @@ func (h *CoreDictServiceHandler) HealthCheck(ctx context.Context, _ *emptypb.Emp
 	case "unhealthy":
 		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY
 	default:
-		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNKNOWN
+		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNSPECIFIED
 	}
 
 	// Check if Connect service is reachable

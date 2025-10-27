@@ -35,11 +35,11 @@ ARG BUILD_TIME
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -trimpath \
     -ldflags="-s -w -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
-    -o /app/bin/core-dict \
-    ./cmd/server/main.go
+    -o /app/bin/core-dict-grpc \
+    ./cmd/grpc/
 
 # Verify the binary was built
-RUN ls -lh /app/bin/core-dict
+RUN ls -lh /app/bin/core-dict-grpc
 
 # ============================================
 # Stage 2: Runtime
@@ -61,7 +61,7 @@ RUN addgroup -g 1000 appuser && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/bin/core-dict /app/core-dict
+COPY --from=builder /app/bin/core-dict-grpc /app/core-dict-grpc
 
 # Copy migrations (if needed at runtime)
 COPY --from=builder /app/migrations /app/migrations
@@ -80,27 +80,24 @@ RUN mkdir -p /app/logs /app/tmp && \
 USER appuser
 
 # Expose ports
-# HTTP API
-EXPOSE 8080
 # gRPC API
 EXPOSE 9090
 # Metrics (Prometheus)
 EXPOSE 9091
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Health check (gRPC health check - requires grpc-health-probe or custom script)
+# For now, commented out until grpc-health-probe is available
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+#     CMD /app/grpc-health-probe -addr=:9090 || exit 1
 
 # Set environment variables
 ENV APP_ENV=production \
-    HTTP_PORT=8080 \
     GRPC_PORT=9090 \
-    METRICS_PORT=9091 \
     LOG_LEVEL=info \
     LOG_FORMAT=json
 
 # Run the application
-ENTRYPOINT ["/app/core-dict"]
+ENTRYPOINT ["/app/core-dict-grpc"]
 
 # ============================================
 # Labels (OCI standard)

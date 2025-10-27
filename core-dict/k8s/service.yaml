@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-dict
+  namespace: dict-system
+  labels:
+    app: core-dict
+    version: v1.0.0
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9091"
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: grpc
+  - port: 9091
+    targetPort: 9091
+    protocol: TCP
+    name: metrics
+  selector:
+    app: core-dict
+
+---
+# Headless service for direct pod access (if needed for stateful operations)
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-dict-headless
+  namespace: dict-system
+  labels:
+    app: core-dict
+    version: v1.0.0
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: false
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: grpc
+  selector:
+    app: core-dict

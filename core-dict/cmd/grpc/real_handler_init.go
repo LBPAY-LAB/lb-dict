@@ -15,6 +15,7 @@ import (
 	"github.com/lbpay-lab/core-dict/internal/application/commands"
 	"github.com/lbpay-lab/core-dict/internal/application/queries"
 	"github.com/lbpay-lab/core-dict/internal/application/services"
+	"github.com/lbpay-lab/core-dict/internal/infrastructure/adapters"
 	"github.com/lbpay-lab/core-dict/internal/infrastructure/database"
 	grpcinfra "github.com/lbpay-lab/core-dict/internal/infrastructure/grpc"
 )
@@ -333,8 +334,12 @@ func initializeRealHandler(logger *slog.Logger) (*grpcinfra.CoreDictServiceHandl
 		cacheService,
 	)
 
+	// Adapt ConnectClient to ConnectService interface
+	connectServiceAdapter := adapters.NewConnectServiceAdapter(connectClient)
+
 	verifyAccountQuery := queries.NewVerifyAccountQueryHandler(
 		accountRepo,
+		connectServiceAdapter,
 		cacheService,
 	)
 

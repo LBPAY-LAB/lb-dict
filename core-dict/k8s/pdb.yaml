@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: core-dict-pdb
+  namespace: dict-system
+  labels:
+    app: core-dict
+    version: v1.0.0
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: core-dict
+  unhealthyPodEvictionPolicy: AlwaysAllow

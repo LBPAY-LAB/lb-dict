@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-dict
+  namespace: dict-system
+  labels:
+    app: core-dict
+    version: v1.0.0
+    component: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: core-dict
+  template:
+    metadata:
+      labels:
+        app: core-dict
+        version: v1.0.0
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: core-dict
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+      containers:
+      - name: core-dict
+        image: lbpay/core-dict:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9090
+          name: grpc
+          protocol: TCP
+        - containerPort: 9091
+          name: metrics
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: core-dict-config
+        - secretRef:
+            name: core-dict-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          grpc:
+            port: 9090
+            service: dict.core.v1.CoreDictService
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          grpc:
+            port: 9090
+            service: dict.core.v1.CoreDictService
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+          successThreshold: 1
+        startupProbe:
+          grpc:
+            port: 9090
+            service: dict.core.v1.CoreDictService
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Set to true if app doesn't need to write
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-logs
+          mountPath: /app/logs
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: app-logs
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - core-dict
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: core-dict
+  namespace: dict-system
+  labels:
+    app: core-dict
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: core-dict
+  namespace: dict-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: core-dict
+  namespace: dict-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: core-dict
+subjects:
+- kind: ServiceAccount
+  name: core-dict
+  namespace: dict-system

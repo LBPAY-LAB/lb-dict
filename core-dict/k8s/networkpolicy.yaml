@@ -1,0 +1,86 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: core-dict-netpol
+  namespace: dict-system
+  labels:
+    app: core-dict
+spec:
+  podSelector:
+    matchLabels:
+      app: core-dict
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from lb-connect namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: lb-connect
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow traffic from monitoring namespace (Prometheus)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9091
+  # Allow traffic within the same namespace (for testing)
+  - from:
+    - podSelector:
+        matchLabels:
+          app: core-dict-client
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow DNS queries
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow traffic to PostgreSQL
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow traffic to Redis
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow traffic to Pulsar
+  - to:
+    - podSelector:
+        matchLabels:
+          app: pulsar
+    ports:
+    - protocol: TCP
+      port: 6650
+  # Allow traffic to Connect Service
+  - to:
+    - podSelector:
+        matchLabels:
+          app: conn-dict
+    ports:
+    - protocol: TCP
+      port: 9092
+  # Allow HTTPS egress (for external APIs, if needed)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
