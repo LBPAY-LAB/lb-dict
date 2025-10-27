@@ -299,6 +299,25 @@ func (r *PostgresEntryRepository) UpdateStatus(ctx context.Context, entryID uuid
 	return nil
 }
 
+// CountByOwnerAndType counts entries by owner tax ID and key type
+func (r *PostgresEntryRepository) CountByOwnerAndType(ctx context.Context, ownerTaxID string, keyType entities.KeyType) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM core_dict.dict_entries
+		WHERE owner_tax_id = $1
+		  AND key_type = $2
+		  AND deleted_at IS NULL
+	`
+
+	var count int
+	err := r.pool.QueryRow(ctx, query, ownerTaxID, string(keyType)).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count entries: %w", err)
+	}
+
+	return count, nil
+}
+
 // hashKey creates a SHA-256 hash of the key value (LGPD compliance)
 func hashKey(keyValue string) string {
 	hash := sha256.Sum256([]byte(keyValue))

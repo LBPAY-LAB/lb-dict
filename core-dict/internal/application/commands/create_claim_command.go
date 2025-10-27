@@ -6,26 +6,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/domain/valueobjects"
 )
 
 // CreateClaimCommand comando para criar claim (reivindicação)
 type CreateClaimCommand struct {
 	KeyValue      string
-	ClaimType     ClaimType // OWNERSHIP ou PORTABILITY
-	ClaimerISPB   string    // ISPB do PSP reivindicador
-	ClaimedISPB   string    // ISPB do PSP reivindicado (nós)
-	AccountID     uuid.UUID // Nova conta (destino do claim)
+	ClaimType     valueobjects.ClaimType // OWNERSHIP ou PORTABILITY
+	ClaimerISPB   string                 // ISPB do PSP reivindicador
+	ClaimedISPB   string                 // ISPB do PSP reivindicado (nós)
+	AccountID     uuid.UUID              // Nova conta (destino do claim)
 	OwnerTaxID    string
 	RequestedBy   uuid.UUID
-	BacenClaimID  string    // ID retornado pelo Bacen
+	BacenClaimID  string // ID retornado pelo Bacen
 }
-
-type ClaimType string
-
-const (
-	ClaimTypeOwnership   ClaimType = "OWNERSHIP"
-	ClaimTypePortability ClaimType = "PORTABILITY"
-)
 
 // CreateClaimResult resultado do comando
 type CreateClaimResult struct {
@@ -36,15 +32,15 @@ type CreateClaimResult struct {
 
 // CreateClaimCommandHandler handler para criação de claim
 type CreateClaimCommandHandler struct {
-	entryRepo      EntryRepository
-	claimRepo      ClaimRepository
+	entryRepo      repositories.EntryRepository
+	claimRepo      repositories.ClaimRepository
 	eventPublisher EventPublisher
 }
 
 // NewCreateClaimCommandHandler cria nova instância
 func NewCreateClaimCommandHandler(
-	entryRepo EntryRepository,
-	claimRepo ClaimRepository,
+	entryRepo repositories.EntryRepository,
+	claimRepo repositories.ClaimRepository,
 	eventPublisher EventPublisher,
 ) *CreateClaimCommandHandler {
 	return &CreateClaimCommandHandler{
@@ -65,13 +61,13 @@ func (h *CreateClaimCommandHandler) Handle(ctx context.Context, cmd CreateClaimC
 	}
 
 	// 2. Buscar entry existente
-	entry, err := h.entryRepo.FindByKeyValue(ctx, cmd.KeyValue)
+	entry, err := h.entryRepo.FindByKey(ctx, cmd.KeyValue)
 	if err != nil {
 		return nil, errors.New("entry not found for key: " + cmd.KeyValue)
 	}
 
 	// 3. Validar que entry pertence a este ISPB
-	if entry.Account.ISPB != cmd.ClaimedISPB {
+	if entry.ISPB != cmd.ClaimedISPB {
 		return nil, errors.New("entry does not belong to claimed ISPB")
 	}
 
@@ -81,24 +77,30 @@ func (h *CreateClaimCommandHandler) Handle(ctx context.Context, cmd CreateClaimC
 		return nil, errors.New("active claim already exists for this key")
 	}
 
-	// 5. Criar entidade Claim
-	now := time.Now()
-	deadline := now.Add(7 * 24 * time.Hour) // 7 dias corridos
-
-	claim := &Claim{
-		ID:            uuid.New(),
-		EntryID:       entry.ID,
-		Type:          cmd.ClaimType,
-		Status:        "PENDING",
-		ClaimerISPB:   cmd.ClaimerISPB,
-		ClaimedISPB:   cmd.ClaimedISPB,
-		NewAccountID:  cmd.AccountID,
-		BacenClaimID:  cmd.BacenClaimID,
-		RequestedAt:   now,
-		DeadlineAt:    deadline,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+	// 5. Criar entidade Claim usando domain factory
+	claimerParticipant := valueobjects.Participant{
+		ISPB: cmd.ClaimerISPB,
+		Name: "", // TODO: buscar nome do participante
 	}
+	donorParticipant := valueobjects.Participant{
+		ISPB: cmd.ClaimedISPB,
+		Name: "", // TODO: buscar nome do participante
+	}
+
+	claim, err := entities.NewClaim(
+		cmd.KeyValue,
+		cmd.ClaimType,
+		claimerParticipant,
+		donorParticipant,
+		cmd.AccountID,
+		entry.AccountID,
+	)
+	if err != nil {
+		return nil, errors.New("failed to create claim: " + err.Error())
+	}
+
+	// Adicionar dados do Bacen
+	claim.SetBacenClaimID(cmd.BacenClaimID)
 
 	// 6. Persistir claim
 	if err := h.claimRepo.Create(ctx, claim); err != nil {
@@ -106,6 +108,7 @@ func (h *CreateClaimCommandHandler) Handle(ctx context.Context, cmd CreateClaimC
 	}
 
 	// 7. Publicar evento (para notificar usuário via app/email)
+	now := time.Now()
 	event := DomainEvent{
 		EventType:     "ClaimReceived",
 		AggregateID:   claim.ID.String(),
@@ -117,7 +120,7 @@ func (h *CreateClaimCommandHandler) Handle(ctx context.Context, cmd CreateClaimC
 			"key_value":      entry.KeyValue,
 			"claim_type":     string(cmd.ClaimType),
 			"claimer_ispb":   cmd.ClaimerISPB,
-			"deadline_at":    deadline,
+			"deadline_at":    claim.ExpiresAt,
 			"bacen_claim_id": cmd.BacenClaimID,
 		},
 	}
@@ -127,33 +130,7 @@ func (h *CreateClaimCommandHandler) Handle(ctx context.Context, cmd CreateClaimC
 
 	return &CreateClaimResult{
 		ClaimID:    claim.ID,
-		Status:     claim.Status,
-		DeadlineAt: deadline,
+		Status:     string(claim.Status),
+		DeadlineAt: claim.ExpiresAt,
 	}, nil
-}
-
-// Temporary interfaces
-type Claim struct {
-	ID             uuid.UUID
-	EntryID        uuid.UUID
-	Type           ClaimType
-	Status         string
-	ClaimerISPB    string
-	ClaimedISPB    string
-	NewAccountID   uuid.UUID
-	BacenClaimID   string
-	RequestedAt    time.Time
-	DeadlineAt     time.Time
-	ResolvedAt     *time.Time
-	ResolutionNote string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
-
-type ClaimRepository interface {
-	Create(ctx context.Context, claim *Claim) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Claim, error)
-	FindActiveByEntryID(ctx context.Context, entryID uuid.UUID) (*Claim, error)
-	Update(ctx context.Context, claim *Claim) error
-	ListPendingClaims(ctx context.Context, limit int) ([]*Claim, error)
 }

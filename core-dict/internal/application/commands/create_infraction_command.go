@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/domain/valueobjects"
 )
 
 // CreateInfractionCommand comando para criar infração (violação de regras PIX)
@@ -36,15 +39,15 @@ type CreateInfractionResult struct {
 
 // CreateInfractionCommandHandler handler para criar infração
 type CreateInfractionCommandHandler struct {
-	entryRepo       EntryRepository
-	infractionRepo  InfractionRepository
+	entryRepo       repositories.EntryRepository
+	infractionRepo  repositories.InfractionRepository
 	eventPublisher  EventPublisher
 }
 
 // NewCreateInfractionCommandHandler cria nova instância
 func NewCreateInfractionCommandHandler(
-	entryRepo EntryRepository,
-	infractionRepo InfractionRepository,
+	entryRepo repositories.EntryRepository,
+	infractionRepo repositories.InfractionRepository,
 	eventPublisher EventPublisher,
 ) *CreateInfractionCommandHandler {
 	return &CreateInfractionCommandHandler{
@@ -70,19 +73,34 @@ func (h *CreateInfractionCommandHandler) Handle(ctx context.Context, cmd CreateI
 		return nil, errors.New("entry not found")
 	}
 
-	// 3. Criar entidade Infraction
-	now := time.Now()
-	infraction := &Infraction{
-		ID:                uuid.New(),
-		EntryID:           cmd.EntryID,
-		Type:              cmd.InfractionType,
-		Description:       cmd.Description,
-		ReportedBy:        cmd.ReportedBy,
-		Severity:          cmd.Severity,
-		Status:            "OPEN",
-		BacenInfractionID: cmd.BacenInfractionID,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+	// 3. Criar entidade Infraction usando domain factory
+	reporter := valueobjects.Participant{
+		ISPB: cmd.ReportedBy,
+		Name: "", // TODO: buscar nome do participante
+	}
+	reported := valueobjects.Participant{
+		ISPB: entry.ISPB,
+		Name: "", // Nome do PSP dono da chave
+	}
+
+	// Converter tipo de infração
+	infractionType := entities.InfractionType(cmd.InfractionType)
+
+	infraction, err := entities.NewInfraction(
+		entry.KeyValue,
+		infractionType,
+		reporter,
+		reported,
+		cmd.Description,
+	)
+	if err != nil {
+		return nil, errors.New("failed to create infraction: " + err.Error())
+	}
+
+	// Adicionar dados adicionais
+	infraction.BacenInfractionID = cmd.BacenInfractionID
+	if cmd.Severity == "CRITICAL" {
+		infraction.Status = entities.InfractionStatusEscalated
 	}
 
 	// 4. Persistir infraction
@@ -91,8 +109,9 @@ func (h *CreateInfractionCommandHandler) Handle(ctx context.Context, cmd CreateI
 	}
 
 	// 5. Se severidade CRITICAL, bloquear chave automaticamente
+	now := time.Now()
 	if cmd.Severity == "CRITICAL" {
-		entry.Status = "BLOCKED"
+		entry.Status = entities.KeyStatusBlocked
 		entry.UpdatedAt = now
 		if err := h.entryRepo.Update(ctx, entry); err != nil {
 			return nil, errors.New("failed to block entry: " + err.Error())
@@ -121,30 +140,7 @@ func (h *CreateInfractionCommandHandler) Handle(ctx context.Context, cmd CreateI
 
 	return &CreateInfractionResult{
 		InfractionID: infraction.ID,
-		Status:       infraction.Status,
+		Status:       string(infraction.Status),
 		CreatedAt:    infraction.CreatedAt,
 	}, nil
-}
-
-// Temporary interfaces
-type Infraction struct {
-	ID                uuid.UUID
-	EntryID           uuid.UUID
-	Type              InfractionType
-	Description       string
-	ReportedBy        string
-	Severity          string
-	Status            string
-	BacenInfractionID string
-	ResolvedAt        *time.Time
-	ResolutionNote    string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-}
-
-type InfractionRepository interface {
-	Create(ctx context.Context, infraction *Infraction) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Infraction, error)
-	FindByEntryID(ctx context.Context, entryID uuid.UUID) ([]*Infraction, error)
-	Update(ctx context.Context, infraction *Infraction) error
 }

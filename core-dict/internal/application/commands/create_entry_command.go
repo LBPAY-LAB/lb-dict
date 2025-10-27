@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/application/services"
 )
 
 // CreateEntryCommand representa o comando para criar uma nova chave PIX
 type CreateEntryCommand struct {
-	KeyType       KeyType
+	KeyType       entities.KeyType
 	KeyValue      string
 	AccountID     uuid.UUID
 	AccountISPB   string
@@ -33,25 +36,25 @@ type CreateEntryResult struct {
 
 // CreateEntryCommandHandler handler para criação de chave PIX
 type CreateEntryCommandHandler struct {
-	entryRepo        EntryRepository
+	entryRepo        repositories.EntryRepository
 	eventPublisher   EventPublisher
 	keyValidator     KeyValidatorService
 	ownershipChecker OwnershipService
 	duplicateChecker DuplicateCheckerService
-	cacheService     CacheService
-	connectClient    ConnectClient      // NEW: gRPC client for RSFN operations
-	entryProducer    EntryEventProducer // NEW: Pulsar event producer
+	cacheService     services.CacheService
+	connectClient    services.ConnectClient // NEW: gRPC client for RSFN operations
+	entryProducer    EntryEventProducer     // NEW: Pulsar event producer
 }
 
 // NewCreateEntryCommandHandler cria nova instância do handler
 func NewCreateEntryCommandHandler(
-	entryRepo EntryRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
 	keyValidator KeyValidatorService,
 	ownershipChecker OwnershipService,
 	duplicateChecker DuplicateCheckerService,
-	cacheService CacheService,
-	connectClient ConnectClient,
+	cacheService services.CacheService,
+	connectClient services.ConnectClient,
 	entryProducer EntryEventProducer,
 ) *CreateEntryCommandHandler {
 	return &CreateEntryCommandHandler{
@@ -102,25 +105,22 @@ func (h *CreateEntryCommandHandler) Handle(ctx context.Context, cmd CreateEntryC
 	}
 
 	// 5. Criar entidade Entry (Domain Layer)
-	entry := &Entry{
-		ID:        uuid.New(),
-		KeyType:   cmd.KeyType,
-		KeyValue:  cmd.KeyValue,
-		Status:    "PENDING",
-		AccountID: cmd.AccountID,
-		Account: Account{
-			ISPB:          cmd.AccountISPB,
-			Branch:        cmd.AccountBranch,
-			AccountNumber: cmd.AccountNumber,
-			AccountType:   cmd.AccountType,
-		},
-		Owner: Owner{
-			Type:  cmd.OwnerType,
-			TaxID: cmd.OwnerTaxID,
-			Name:  cmd.OwnerName,
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	now := time.Now()
+	entry := &entities.Entry{
+		ID:            uuid.New(),
+		KeyType:       cmd.KeyType,
+		KeyValue:      cmd.KeyValue,
+		Status:        entities.KeyStatusPending,
+		AccountID:     cmd.AccountID,
+		ISPB:          cmd.AccountISPB,
+		Branch:        cmd.AccountBranch,
+		AccountNumber: cmd.AccountNumber,
+		AccountType:   cmd.AccountType,
+		OwnerName:     cmd.OwnerName,
+		OwnerTaxID:    cmd.OwnerTaxID,
+		OwnerType:     cmd.OwnerType,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	// 6. Persistir no repositório
@@ -145,11 +145,11 @@ func (h *CreateEntryCommandHandler) Handle(ctx context.Context, cmd CreateEntryC
 					"entry_id":       entry.ID.String(),
 					"key_type":       string(entry.KeyType),
 					"key_value":      entry.KeyValue,
-					"ispb":           entry.Account.ISPB,
-					"account_branch": entry.Account.Branch,
-					"account_number": entry.Account.AccountNumber,
-					"owner_name":     entry.Owner.Name,
-					"owner_tax_id":   entry.Owner.TaxID,
+					"ispb":           entry.ISPB,
+					"account_branch": entry.Branch,
+					"account_number": entry.AccountNumber,
+					"owner_name":     entry.OwnerName,
+					"owner_tax_id":   entry.OwnerTaxID,
 				},
 			}); err != nil {
 				// Log error but don't fail the request
@@ -160,51 +160,16 @@ func (h *CreateEntryCommandHandler) Handle(ctx context.Context, cmd CreateEntryC
 	}
 
 	// 8. Invalidar cache
-	h.cacheService.InvalidateKey(ctx, "entry:"+cmd.KeyValue)
+	h.cacheService.Delete(ctx, "entry:"+cmd.KeyValue)
 
 	return &CreateEntryResult{
 		EntryID:   entry.ID,
-		Status:    entry.Status,
+		Status:    string(entry.Status),
 		CreatedAt: entry.CreatedAt,
 	}, nil
 }
 
-// Temporary interfaces (Domain Layer será implementado por outro agente)
-type KeyType string
-
-const (
-	KeyTypeCPF   KeyType = "CPF"
-	KeyTypeCNPJ  KeyType = "CNPJ"
-	KeyTypeEmail KeyType = "EMAIL"
-	KeyTypePhone KeyType = "PHONE"
-	KeyTypeEVP   KeyType = "EVP"
-)
-
-type Entry struct {
-	ID        uuid.UUID
-	KeyType   KeyType
-	KeyValue  string
-	Status    string
-	AccountID uuid.UUID
-	Account   Account
-	Owner     Owner
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-type Account struct {
-	ISPB          string
-	Branch        string
-	AccountNumber string
-	AccountType   string
-}
-
-type Owner struct {
-	Type  string
-	TaxID string
-	Name  string
-}
-
+// DomainEvent represents an event in the domain
 type DomainEvent struct {
 	EventType     string
 	AggregateID   string
@@ -213,47 +178,22 @@ type DomainEvent struct {
 	Payload       map[string]interface{}
 }
 
-// Repository interfaces (temporárias)
-type EntryRepository interface {
-	Create(ctx context.Context, entry *Entry) error
-	FindByID(ctx context.Context, id uuid.UUID) (*Entry, error)
-	FindByKeyValue(ctx context.Context, keyValue string) (*Entry, error)
-	Update(ctx context.Context, entry *Entry) error
-	Delete(ctx context.Context, id uuid.UUID) error
-	CountByOwnerAndType(ctx context.Context, ownerTaxID string, keyType KeyType) (int, error)
-}
-
-// Service interfaces (temporárias)
+// Service interfaces
 type EventPublisher interface {
 	Publish(ctx context.Context, event DomainEvent) error
 }
 
 type KeyValidatorService interface {
-	ValidateFormat(keyType KeyType, keyValue string) error
-	ValidateLimits(ctx context.Context, keyType KeyType, ownerTaxID string) error
+	ValidateFormat(keyType entities.KeyType, keyValue string) error
+	ValidateLimits(ctx context.Context, keyType entities.KeyType, ownerTaxID string) error
 }
 
 type OwnershipService interface {
-	ValidateOwnership(ctx context.Context, keyType KeyType, keyValue, ownerTaxID string) error
+	ValidateOwnership(ctx context.Context, keyType entities.KeyType, keyValue, ownerTaxID string) error
 }
 
 type DuplicateCheckerService interface {
 	IsDuplicate(ctx context.Context, keyValue string) (bool, error)
-}
-
-type CacheService interface {
-	Get(ctx context.Context, key string) (interface{}, error)
-	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
-	InvalidateKey(ctx context.Context, key string) error
-	InvalidatePattern(ctx context.Context, pattern string) error
-}
-
-// ConnectClient interface for gRPC communication with conn-dict service
-type ConnectClient interface {
-	GetEntryByKey(ctx context.Context, keyValue string) (interface{}, error)
-	CreateEntry(ctx context.Context, keyType, keyValue, accountISPB string) (string, error)
-	UpdateEntry(ctx context.Context, entryID, newAccountISPB string) error
-	DeleteEntry(ctx context.Context, entryID, reason string) error
 }
 
 // EntryEventProducer interface for publishing events to Pulsar

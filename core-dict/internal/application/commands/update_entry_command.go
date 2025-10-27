@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/application/services"
 )
 
 // UpdateEntryCommand comando para atualizar chave PIX
@@ -27,19 +30,19 @@ type UpdateEntryResult struct {
 
 // UpdateEntryCommandHandler handler para atualização de chave PIX
 type UpdateEntryCommandHandler struct {
-	entryRepo      EntryRepository
+	entryRepo      repositories.EntryRepository
 	eventPublisher EventPublisher
-	cacheService   CacheService
-	connectClient  ConnectClient      // NEW: gRPC client for RSFN
+	cacheService   services.CacheService
+	connectClient  services.ConnectClient      // NEW: gRPC client for RSFN
 	entryProducer  EntryEventProducer // NEW: Pulsar event producer
 }
 
 // NewUpdateEntryCommandHandler cria nova instância
 func NewUpdateEntryCommandHandler(
-	entryRepo EntryRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
-	cacheService CacheService,
-	connectClient ConnectClient,
+	cacheService services.CacheService,
+	connectClient services.ConnectClient,
 	entryProducer EntryEventProducer,
 ) *UpdateEntryCommandHandler {
 	return &UpdateEntryCommandHandler{
@@ -66,22 +69,22 @@ func (h *UpdateEntryCommandHandler) Handle(ctx context.Context, cmd UpdateEntryC
 	}
 
 	// 3. Validar status (apenas ACTIVE pode ser atualizado)
-	if entry.Status != "ACTIVE" {
+	if entry.Status != entities.KeyStatusActive {
 		return nil, errors.New("only active entries can be updated")
 	}
 
-	// 4. Atualizar campos
+	// 4. Atualizar campos (flat structure)
 	if cmd.AccountID != uuid.Nil {
 		entry.AccountID = cmd.AccountID
 	}
 	if cmd.AccountISPB != "" {
-		entry.Account.ISPB = cmd.AccountISPB
+		entry.ISPB = cmd.AccountISPB
 	}
 	if cmd.AccountBranch != "" {
-		entry.Account.Branch = cmd.AccountBranch
+		entry.Branch = cmd.AccountBranch
 	}
 	if cmd.AccountNumber != "" {
-		entry.Account.AccountNumber = cmd.AccountNumber
+		entry.AccountNumber = cmd.AccountNumber
 	}
 	entry.UpdatedAt = time.Now()
 
@@ -116,7 +119,7 @@ func (h *UpdateEntryCommandHandler) Handle(ctx context.Context, cmd UpdateEntryC
 	}
 
 	// 7. Invalidar cache
-	h.cacheService.InvalidateKey(ctx, "entry:"+entry.KeyValue)
+	h.cacheService.Delete(ctx, "entry:"+entry.KeyValue)
 
 	return &UpdateEntryResult{
 		EntryID:   entry.ID,

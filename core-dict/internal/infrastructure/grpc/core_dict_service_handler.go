@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -16,7 +17,7 @@ import (
 
 	"github.com/lbpay-lab/core-dict/internal/application/commands"
 	"github.com/lbpay-lab/core-dict/internal/application/queries"
-	// "github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
 	"github.com/lbpay-lab/core-dict/internal/infrastructure/grpc/mappers"
 )
 
@@ -503,57 +504,53 @@ func (h *CoreDictServiceHandler) RespondToClaim(ctx context.Context, req *corev1
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("RespondToClaim: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("RespondToClaim: REAL MODE", "claim_id", req.GetClaimId(), "response", req.GetResponse())
 
-	// h.logger.Info("RespondToClaim: REAL MODE", "claim_id", req.GetClaimId(), "response", req.GetResponse())
-	//
-	// // 3a. Extract user_id from context (set by auth interceptor)
-	// userID, ok := ctx.Value("user_id").(string)
-	// if !ok || userID == "" {
-	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	// }
-	//
-	// // 3b. Map proto request → domain command based on response type
-	// var claim *entities.Claim
-	// var err error
-	//
-	// switch req.GetResponse() {
-	// case corev1.RespondToClaimRequest_CLAIM_RESPONSE_ACCEPT:
-	// 	// Accept claim: Map to ConfirmClaimCommand
-	// 	cmd, mapErr := mappers.MapProtoRespondToClaimRequestToConfirmCommand(req, userID)
-	// 	if mapErr != nil {
-	// 		h.logger.Error("RespondToClaim: mapping to ConfirmCommand failed", "error", mapErr, "user_id", userID)
-	// 		return nil, status.Error(codes.InvalidArgument, mapErr.Error())
-	// 	}
-	//
-	// 	// 3c. Execute ConfirmClaimCommandHandler
-	// 	claim, err = h.confirmClaimCmd.Handle(ctx, cmd)
-	// 	if err != nil {
-	// 		h.logger.Error("RespondToClaim: ConfirmClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
-	// 		return nil, mappers.MapDomainErrorToGRPC(err)
-	// 	}
-	//
-	// case corev1.RespondToClaimRequest_CLAIM_RESPONSE_REJECT:
-	// 	// Reject claim: Map to CancelClaimCommand
-	// 	cmd, mapErr := mappers.MapProtoRespondToClaimRequestToCancelCommand(req, userID)
-	// 	if mapErr != nil {
-	// 		h.logger.Error("RespondToClaim: mapping to CancelCommand failed", "error", mapErr, "user_id", userID)
-	// 		return nil, status.Error(codes.InvalidArgument, mapErr.Error())
-	// 	}
-	//
-	// 	// 3c. Execute CancelClaimCommandHandler
-	// 	claim, err = h.cancelClaimCmd.Handle(ctx, cmd)
-	// 	if err != nil {
-	// 		h.logger.Error("RespondToClaim: CancelClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
-	// 		return nil, mappers.MapDomainErrorToGRPC(err)
-	// 	}
-	// }
-	//
-	// // 3d. Map domain result → proto response
-	// h.logger.Info("RespondToClaim: success", "claim_id", claim.ID, "new_status", claim.Status, "user_id", userID)
-	// return mappers.MapDomainClaimToProtoRespondToClaimResponse(claim), nil
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Map proto request → domain command based on response type
+	var claim *entities.Claim
+	var err error
+
+	switch req.GetResponse() {
+	case corev1.RespondToClaimRequest_CLAIM_RESPONSE_ACCEPT:
+		// Accept claim: Map to ConfirmClaimCommand
+		cmd, mapErr := mappers.MapProtoRespondToClaimRequestToConfirmCommand(req, userID)
+		if mapErr != nil {
+			h.logger.Error("RespondToClaim: mapping to ConfirmCommand failed", "error", mapErr, "user_id", userID)
+			return nil, status.Error(codes.InvalidArgument, mapErr.Error())
+		}
+
+		// 3c. Execute ConfirmClaimCommandHandler
+		claim, err = h.confirmClaimCmd.Handle(ctx, cmd)
+		if err != nil {
+			h.logger.Error("RespondToClaim: ConfirmClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+			return nil, mappers.MapDomainErrorToGRPC(err)
+		}
+
+	case corev1.RespondToClaimRequest_CLAIM_RESPONSE_REJECT:
+		// Reject claim: Map to CancelClaimCommand
+		cmd, mapErr := mappers.MapProtoRespondToClaimRequestToCancelCommand(req, userID)
+		if mapErr != nil {
+			h.logger.Error("RespondToClaim: mapping to CancelCommand failed", "error", mapErr, "user_id", userID)
+			return nil, status.Error(codes.InvalidArgument, mapErr.Error())
+		}
+
+		// 3c. Execute CancelClaimCommandHandler
+		claim, err = h.cancelClaimCmd.Handle(ctx, cmd)
+		if err != nil {
+			h.logger.Error("RespondToClaim: CancelClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+			return nil, mappers.MapDomainErrorToGRPC(err)
+		}
+	}
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("RespondToClaim: success", "claim_id", claim.ID, "new_status", claim.Status, "user_id", userID)
+	return mappers.MapDomainClaimToProtoRespondToClaimResponse(claim), nil
 }
 
 // CancelClaim allows the claimer to cancel their own claim
@@ -578,39 +575,35 @@ func (h *CoreDictServiceHandler) CancelClaim(ctx context.Context, req *corev1.Ca
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("CancelClaim: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("CancelClaim: REAL MODE", "claim_id", req.GetClaimId())
 
-	// h.logger.Info("CancelClaim: REAL MODE", "claim_id", req.GetClaimId())
-	//
-	// // 3a. Extract user_id from context (set by auth interceptor)
-	// userID, ok := ctx.Value("user_id").(string)
-	// if !ok || userID == "" {
-	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	// }
-	//
-	// // 3b. Map proto request → domain command
-	// cmd, err := mappers.MapProtoCancelClaimRequestToCommand(req, userID)
-	// if err != nil {
-	// 	h.logger.Error("CancelClaim: mapping failed", "error", err, "user_id", userID)
-	// 	return nil, status.Error(codes.InvalidArgument, err.Error())
-	// }
-	//
-	// // 3c. Execute command handler
-	// claim, err := h.cancelClaimCmd.Handle(ctx, cmd)
-	// if err != nil {
-	// 	h.logger.Error("CancelClaim: command failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
-	// 	return nil, mappers.MapDomainErrorToGRPC(err)
-	// }
-	//
-	// // 3d. Map domain result → proto response
-	// h.logger.Info("CancelClaim: success", "claim_id", claim.ID, "status", claim.Status, "user_id", userID)
-	// return &corev1.CancelClaimResponse{
-	// 	ClaimId:     claim.ID.String(),
-	// 	Status:      mappers.MapDomainClaimStatusToProto(claim.Status),
-	// 	CancelledAt: timestamppb.New(claim.UpdatedAt),
-	// }, nil
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Map proto request → domain command
+	cmd, err := mappers.MapProtoCancelClaimRequestToCommand(req, userID)
+	if err != nil {
+		h.logger.Error("CancelClaim: mapping failed", "error", err, "user_id", userID)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// 3c. Execute command handler
+	claim, err := h.cancelClaimCmd.Handle(ctx, cmd)
+	if err != nil {
+		h.logger.Error("CancelClaim: command failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("CancelClaim: success", "claim_id", claim.ID, "status", claim.Status, "user_id", userID)
+	return &corev1.CancelClaimResponse{
+		ClaimId:     claim.ID.String(),
+		Status:      mappers.MapDomainClaimStatusToProto(claim.Status),
+		CancelledAt: timestamppb.New(claim.UpdatedAt),
+	}, nil
 }
 
 // ========================================================================
@@ -649,70 +642,66 @@ func (h *CoreDictServiceHandler) StartPortability(ctx context.Context, req *core
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("StartPortability: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("StartPortability: REAL MODE", "key_id", req.GetKeyId(), "new_account_id", req.GetNewAccountId())
 
-	// h.logger.Info("StartPortability: REAL MODE", "key_id", req.GetKeyId(), "new_account_id", req.GetNewAccountId())
-	//
-	// // 3a. Extract user_id from context (set by auth interceptor)
-	// userID, ok := ctx.Value("user_id").(string)
-	// if !ok || userID == "" {
-	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	// }
-	//
-	// // 3b. Verify ownership: User must own the key being ported
-	// // TODO: Create mapper MapProtoStartPortabilityRequestToCommand or use UpdateEntryCommand
-	// // For now, use updateEntryCmd with account change inline
-	//
-	// entryID, err := uuid.Parse(req.GetKeyId())
-	// if err != nil {
-	// 	h.logger.Error("StartPortability: invalid key_id", "error", err, "key_id", req.GetKeyId())
-	// 	return nil, status.Error(codes.InvalidArgument, "invalid key_id format")
-	// }
-	//
-	// newAccountID, err := uuid.Parse(req.GetNewAccountId())
-	// if err != nil {
-	// 	h.logger.Error("StartPortability: invalid new_account_id", "error", err, "new_account_id", req.GetNewAccountId())
-	// 	return nil, status.Error(codes.InvalidArgument, "invalid new_account_id format")
-	// }
-	//
-	// requestedBy, err := uuid.Parse(userID)
-	// if err != nil {
-	// 	h.logger.Error("StartPortability: invalid user_id", "error", err, "user_id", userID)
-	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
-	// }
-	//
-	// // TODO: Fetch new account details to populate response
-	// // For now, create UpdateEntryCommand to change entry's AccountID
-	// cmd := commands.UpdateEntryCommand{
-	// 	EntryID:     entryID,
-	// 	AccountID:   newAccountID, // Change account (portability)
-	// 	RequestedBy: requestedBy,
-	// 	// Status: "PORTABILITY_PENDING" (may need to update entry status)
-	// }
-	//
-	// // 3c. Execute command handler
-	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
-	// if err != nil {
-	// 	h.logger.Error("StartPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "key_id", req.GetKeyId())
-	// 	return nil, mappers.MapDomainErrorToGRPC(err)
-	// }
-	//
-	// // TODO: Create PortabilityHistory record (separate table/entity)
-	// // For now, just return success response
-	//
-	// // 3d. Map domain result → proto response
-	// h.logger.Info("StartPortability: success", "entry_id", entry.ID, "new_account_id", newAccountID, "user_id", userID)
-	// portabilityID := fmt.Sprintf("port-%d", time.Now().Unix()) // TODO: Generate proper UUID
-	//
-	// return &corev1.StartPortabilityResponse{
-	// 	PortabilityId: portabilityID,
-	// 	KeyId:         entry.ID.String(),
-	// 	NewAccount:    nil, // TODO: Fetch account details and map to proto
-	// 	StartedAt:     timestamppb.New(entry.UpdatedAt),
-	// 	Message:       "Portability initiated. Awaiting confirmation.",
-	// }, nil
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Verify ownership: User must own the key being ported
+	// TODO: Create mapper MapProtoStartPortabilityRequestToCommand or use UpdateEntryCommand
+	// For now, use updateEntryCmd with account change inline
+
+	entryID, err := uuid.Parse(req.GetKeyId())
+	if err != nil {
+		h.logger.Error("StartPortability: invalid key_id", "error", err, "key_id", req.GetKeyId())
+		return nil, status.Error(codes.InvalidArgument, "invalid key_id format")
+	}
+
+	newAccountID, err := uuid.Parse(req.GetNewAccountId())
+	if err != nil {
+		h.logger.Error("StartPortability: invalid new_account_id", "error", err, "new_account_id", req.GetNewAccountId())
+		return nil, status.Error(codes.InvalidArgument, "invalid new_account_id format")
+	}
+
+	requestedBy, err := uuid.Parse(userID)
+	if err != nil {
+		h.logger.Error("StartPortability: invalid user_id", "error", err, "user_id", userID)
+		return nil, status.Error(codes.Internal, "invalid user_id format")
+	}
+
+	// TODO: Fetch new account details to populate response
+	// For now, create UpdateEntryCommand to change entry's AccountID
+	cmd := commands.UpdateEntryCommand{
+		EntryID:     entryID,
+		AccountID:   newAccountID, // Change account (portability)
+		RequestedBy: requestedBy,
+		// Status: "PORTABILITY_PENDING" (may need to update entry status)
+	}
+
+	// 3c. Execute command handler
+	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	if err != nil {
+		h.logger.Error("StartPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "key_id", req.GetKeyId())
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// TODO: Create PortabilityHistory record (separate table/entity)
+	// For now, just return success response
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("StartPortability: success", "entry_id", entry.ID, "new_account_id", newAccountID, "user_id", userID)
+	portabilityID := fmt.Sprintf("port-%d", time.Now().Unix()) // TODO: Generate proper UUID
+
+	return &corev1.StartPortabilityResponse{
+		PortabilityId: portabilityID,
+		KeyId:         entry.ID.String(),
+		NewAccount:    nil, // TODO: Fetch account details and map to proto
+		StartedAt:     timestamppb.New(entry.UpdatedAt),
+		Message:       "Portability initiated. Awaiting confirmation.",
+	}, nil
 }
 
 // ConfirmPortability confirms a portability operation
@@ -738,54 +727,50 @@ func (h *CoreDictServiceHandler) ConfirmPortability(ctx context.Context, req *co
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("ConfirmPortability: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("ConfirmPortability: REAL MODE", "portability_id", req.GetPortabilityId())
 
-	// h.logger.Info("ConfirmPortability: REAL MODE", "portability_id", req.GetPortabilityId())
-	//
-	// // 3a. Extract user_id from context (set by auth interceptor)
-	// userID, ok := ctx.Value("user_id").(string)
-	// if !ok || userID == "" {
-	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	// }
-	//
-	// // 3b. Lookup portability record by portability_id
-	// // TODO: Query PortabilityHistory table to get EntryID and verify user owns it
-	// // For now, assume portability_id format is "port-<entryID>"
-	//
-	// // Parse portability_id to extract entry_id (mock implementation)
-	// // In real mode, this would query the PortabilityHistory table
-	// var entryID uuid.UUID
-	// // TODO: Fetch from PortabilityHistory table
-	//
-	// requestedBy, err := uuid.Parse(userID)
-	// if err != nil {
-	// 	h.logger.Error("ConfirmPortability: invalid user_id", "error", err, "user_id", userID)
-	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
-	// }
-	//
-	// // 3c. Update entry status to ACTIVE (portability confirmed)
-	// cmd := commands.UpdateEntryCommand{
-	// 	EntryID:     entryID,
-	// 	RequestedBy: requestedBy,
-	// 	// Status: "ACTIVE" (portability completed)
-	// }
-	//
-	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
-	// if err != nil {
-	// 	h.logger.Error("ConfirmPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
-	// 	return nil, mappers.MapDomainErrorToGRPC(err)
-	// }
-	//
-	// // 3d. Map domain result → proto response
-	// h.logger.Info("ConfirmPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
-	// return &corev1.ConfirmPortabilityResponse{
-	// 	PortabilityId: req.GetPortabilityId(),
-	// 	KeyId:         entry.ID.String(),
-	// 	Status:        mappers.MapDomainStatusToProto(entry.Status),
-	// 	ConfirmedAt:   timestamppb.New(entry.UpdatedAt),
-	// }, nil
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Lookup portability record by portability_id
+	// TODO: Query PortabilityHistory table to get EntryID and verify user owns it
+	// For now, assume portability_id format is "port-<entryID>"
+
+	// Parse portability_id to extract entry_id (mock implementation)
+	// In real mode, this would query the PortabilityHistory table
+	var entryID uuid.UUID
+	// TODO: Fetch from PortabilityHistory table
+
+	requestedBy, err := uuid.Parse(userID)
+	if err != nil {
+		h.logger.Error("ConfirmPortability: invalid user_id", "error", err, "user_id", userID)
+		return nil, status.Error(codes.Internal, "invalid user_id format")
+	}
+
+	// 3c. Update entry status to ACTIVE (portability confirmed)
+	cmd := commands.UpdateEntryCommand{
+		EntryID:     entryID,
+		RequestedBy: requestedBy,
+		// Status: "ACTIVE" (portability completed)
+	}
+
+	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	if err != nil {
+		h.logger.Error("ConfirmPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("ConfirmPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	return &corev1.ConfirmPortabilityResponse{
+		PortabilityId: req.GetPortabilityId(),
+		KeyId:         entry.ID.String(),
+		Status:        mappers.MapDomainStatusToProto(entry.Status),
+		ConfirmedAt:   timestamppb.New(entry.UpdatedAt),
+	}, nil
 }
 
 // CancelPortability cancels a portability operation
@@ -809,52 +794,48 @@ func (h *CoreDictServiceHandler) CancelPortability(ctx context.Context, req *cor
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("CancelPortability: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("CancelPortability: REAL MODE", "portability_id", req.GetPortabilityId())
 
-	// h.logger.Info("CancelPortability: REAL MODE", "portability_id", req.GetPortabilityId())
-	//
-	// // 3a. Extract user_id from context (set by auth interceptor)
-	// userID, ok := ctx.Value("user_id").(string)
-	// if !ok || userID == "" {
-	// 	return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	// }
-	//
-	// // 3b. Lookup portability record by portability_id
-	// // TODO: Query PortabilityHistory table to get EntryID and original AccountID
-	// // Revert entry's AccountID to original value
-	//
-	// var entryID uuid.UUID
-	// var originalAccountID uuid.UUID
-	// // TODO: Fetch from PortabilityHistory table
-	//
-	// requestedBy, err := uuid.Parse(userID)
-	// if err != nil {
-	// 	h.logger.Error("CancelPortability: invalid user_id", "error", err, "user_id", userID)
-	// 	return nil, status.Error(codes.Internal, "invalid user_id format")
-	// }
-	//
-	// // 3c. Revert entry's AccountID to original
-	// cmd := commands.UpdateEntryCommand{
-	// 	EntryID:     entryID,
-	// 	AccountID:   originalAccountID, // Revert to original account
-	// 	RequestedBy: requestedBy,
-	// 	// Status: "ACTIVE" (back to normal)
-	// }
-	//
-	// entry, err := h.updateEntryCmd.Handle(ctx, cmd)
-	// if err != nil {
-	// 	h.logger.Error("CancelPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
-	// 	return nil, mappers.MapDomainErrorToGRPC(err)
-	// }
-	//
-	// // 3d. Map domain result → proto response
-	// h.logger.Info("CancelPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
-	// return &corev1.CancelPortabilityResponse{
-	// 	PortabilityId: req.GetPortabilityId(),
-	// 	CancelledAt:   timestamppb.New(entry.UpdatedAt),
-	// }, nil
+	// 3a. Extract user_id from context (set by auth interceptor)
+	userID, ok := ctx.Value("user_id").(string)
+	if !ok || userID == "" {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+
+	// 3b. Lookup portability record by portability_id
+	// TODO: Query PortabilityHistory table to get EntryID and original AccountID
+	// Revert entry's AccountID to original value
+
+	var entryID uuid.UUID
+	var originalAccountID uuid.UUID
+	// TODO: Fetch from PortabilityHistory table
+
+	requestedBy, err := uuid.Parse(userID)
+	if err != nil {
+		h.logger.Error("CancelPortability: invalid user_id", "error", err, "user_id", userID)
+		return nil, status.Error(codes.Internal, "invalid user_id format")
+	}
+
+	// 3c. Revert entry's AccountID to original
+	cmd := commands.UpdateEntryCommand{
+		EntryID:     entryID,
+		AccountID:   originalAccountID, // Revert to original account
+		RequestedBy: requestedBy,
+		// Status: "ACTIVE" (back to normal)
+	}
+
+	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	if err != nil {
+		h.logger.Error("CancelPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3d. Map domain result → proto response
+	h.logger.Info("CancelPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	return &corev1.CancelPortabilityResponse{
+		PortabilityId: req.GetPortabilityId(),
+		CancelledAt:   timestamppb.New(entry.UpdatedAt),
+	}, nil
 }
 
 // ========================================================================
@@ -896,45 +877,41 @@ func (h *CoreDictServiceHandler) LookupKey(ctx context.Context, req *corev1.Look
 	}
 
 	// ========== 3. REAL MODE (business logic) ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("LookupKey: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("LookupKey: REAL MODE", "key_type", req.GetKey().GetKeyType(), "key_value", req.GetKey().GetKeyValue())
 
-	// h.logger.Info("LookupKey: REAL MODE", "key_type", req.GetKey().GetKeyType(), "key_value", req.GetKey().GetKeyValue())
-	//
-	// // NOTE: LookupKey is PUBLIC - no user_id extraction needed
-	//
-	// // 3a. Map proto request → domain query
-	// query := mappers.MapProtoLookupKeyRequestToQuery(req)
-	//
-	// // 3b. Execute query handler
-	// entry, err := h.getEntryQuery.Handle(ctx, query)
-	// if err != nil {
-	// 	h.logger.Error("LookupKey: query failed", "error", err, "key_value", req.GetKey().GetKeyValue())
-	// 	return nil, mappers.MapDomainErrorToGRPC(err)
-	// }
-	//
-	// // 3c. Fetch account details (to include in response)
-	// var account *entities.Account
-	// if h.getAccountQuery != nil {
-	// 	account, _ = h.getAccountQuery.Handle(ctx, queries.GetAccountQuery{AccountID: entry.AccountID})
-	// }
-	//
-	// // 3d. Map domain result → proto response (PUBLIC DATA ONLY)
-	// h.logger.Info("LookupKey: success", "entry_id", entry.ID, "key_value", req.GetKey().GetKeyValue())
-	// resp := &corev1.LookupKeyResponse{
-	// 	Key:    req.GetKey(),
-	// 	Status: mappers.MapDomainStatusToProto(entry.Status),
-	// }
-	//
-	// // Map account (public fields only)
-	// if account != nil {
-	// 	resp.Account = mappers.MapDomainAccountToProto(account)
-	// 	resp.AccountHolderName = account.HolderName // Public field
-	// 	// DO NOT include: CPF/CNPJ full, balance, sensitive fields
-	// }
-	//
-	// return resp, nil
+	// NOTE: LookupKey is PUBLIC - no user_id extraction needed
+
+	// 3a. Map proto request → domain query
+	query := mappers.MapProtoLookupKeyRequestToQuery(req)
+
+	// 3b. Execute query handler
+	entry, err := h.getEntryQuery.Handle(ctx, query)
+	if err != nil {
+		h.logger.Error("LookupKey: query failed", "error", err, "key_value", req.GetKey().GetKeyValue())
+		return nil, mappers.MapDomainErrorToGRPC(err)
+	}
+
+	// 3c. Fetch account details (to include in response)
+	var account *entities.Account
+	if h.getAccountQuery != nil {
+		account, _ = h.getAccountQuery.Handle(ctx, queries.GetAccountQuery{AccountID: entry.AccountID})
+	}
+
+	// 3d. Map domain result → proto response (PUBLIC DATA ONLY)
+	h.logger.Info("LookupKey: success", "entry_id", entry.ID, "key_value", req.GetKey().GetKeyValue())
+	resp := &corev1.LookupKeyResponse{
+		Key:    req.GetKey(),
+		Status: mappers.MapDomainStatusToProto(entry.Status),
+	}
+
+	// Map account (public fields only)
+	if account != nil {
+		resp.Account = mappers.MapDomainAccountToProto(account)
+		resp.AccountHolderName = account.HolderName // Public field
+		// DO NOT include: CPF/CNPJ full, balance, sensitive fields
+	}
+
+	return resp, nil
 }
 
 // HealthCheck performs a health check of the Core DICT service
@@ -956,52 +933,48 @@ func (h *CoreDictServiceHandler) HealthCheck(ctx context.Context, _ *emptypb.Emp
 	}
 
 	// ========== REAL MODE ==========
-	// TODO: Implement real mode after fixing mappers
-	h.logger.Error("HealthCheck: REAL MODE not implemented yet")
-	return nil, status.Error(codes.Unimplemented, "Real mode not yet implemented. Use CORE_DICT_USE_MOCK_MODE=true")
+	h.logger.Info("HealthCheck: REAL MODE")
 
-	// h.logger.Info("HealthCheck: REAL MODE")
-	//
-	// // NOTE: HealthCheck is PUBLIC - no user_id extraction needed
-	//
-	// // Execute health check query
-	// healthStatus, err := h.healthCheckQuery.Handle(ctx, queries.HealthCheckQuery{})
-	// if err != nil {
-	// 	h.logger.Error("HealthCheck: query failed", "error", err)
-	// 	return &corev1.HealthCheckResponse{
-	// 		Status:           corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY,
-	// 		ConnectReachable: false,
-	// 		CheckedAt:        timestamppb.Now(),
-	// 	}, nil // Don't fail - return unhealthy status
-	// }
-	//
-	// // Map domain result → proto response
-	// h.logger.Info("HealthCheck: success", "status", healthStatus.Status)
-	//
-	// // Map status string to proto enum
-	// var protoStatus corev1.HealthCheckResponse_HealthStatus
-	// switch healthStatus.Status {
-	// case "healthy":
-	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_HEALTHY
-	// case "degraded":
-	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_DEGRADED
-	// case "unhealthy":
-	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY
-	// default:
-	// 	protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNKNOWN
-	// }
-	//
-	// // Check if Connect service is reachable
-	// connectReachable := true
-	// if connectStatus, ok := healthStatus.Dependencies["connect"].(map[string]interface{}); ok {
-	// 	if status, ok := connectStatus["status"].(string); ok {
-	// 		connectReachable = (status == "healthy")
-	// 	}
-	// }
-	//
-	// return &corev1.HealthCheckResponse{
-	// 	Status:           protoStatus,
-	// 	ConnectReachable: connectReachable,
-	// 	CheckedAt:        timestamppb.New(healthStatus.Timestamp),
-	// }, nil
+	// NOTE: HealthCheck is PUBLIC - no user_id extraction needed
+
+	// Execute health check query
+	healthStatus, err := h.healthCheckQuery.Handle(ctx, queries.HealthCheckQuery{})
+	if err != nil {
+		h.logger.Error("HealthCheck: query failed", "error", err)
+		return &corev1.HealthCheckResponse{
+			Status:           corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY,
+			ConnectReachable: false,
+			CheckedAt:        timestamppb.Now(),
+		}, nil // Don't fail - return unhealthy status
+	}
+
+	// Map domain result → proto response
+	h.logger.Info("HealthCheck: success", "status", healthStatus.Status)
+
+	// Map status string to proto enum
+	var protoStatus corev1.HealthCheckResponse_HealthStatus
+	switch healthStatus.Status {
+	case "healthy":
+		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_HEALTHY
+	case "degraded":
+		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_DEGRADED
+	case "unhealthy":
+		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNHEALTHY
+	default:
+		protoStatus = corev1.HealthCheckResponse_HEALTH_STATUS_UNKNOWN
+	}
+
+	// Check if Connect service is reachable
+	connectReachable := true
+	if connectStatus, ok := healthStatus.Dependencies["connect"].(map[string]interface{}); ok {
+		if status, ok := connectStatus["status"].(string); ok {
+			connectReachable = (status == "healthy")
+		}
+	}
+
+	return &corev1.HealthCheckResponse{
+		Status:           protoStatus,
+		ConnectReachable: connectReachable,
+		CheckedAt:        timestamppb.New(healthStatus.Timestamp),
+	}, nil
 }

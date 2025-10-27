@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/domain/valueobjects"
 )
 
 // ConfirmClaimCommand comando para confirmar claim (usuário aceita reivindicação)
@@ -19,21 +21,21 @@ type ConfirmClaimCommand struct {
 // ConfirmClaimResult resultado do comando
 type ConfirmClaimResult struct {
 	ClaimID     uuid.UUID
-	Status      string
+	Status      valueobjects.ClaimStatus
 	ConfirmedAt time.Time
 }
 
 // ConfirmClaimCommandHandler handler para confirmar claim
 type ConfirmClaimCommandHandler struct {
-	claimRepo      ClaimRepository
-	entryRepo      EntryRepository
+	claimRepo      repositories.ClaimRepository
+	entryRepo      repositories.EntryRepository
 	eventPublisher EventPublisher
 }
 
 // NewConfirmClaimCommandHandler cria nova instância
 func NewConfirmClaimCommandHandler(
-	claimRepo ClaimRepository,
-	entryRepo EntryRepository,
+	claimRepo repositories.ClaimRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
 ) *ConfirmClaimCommandHandler {
 	return &ConfirmClaimCommandHandler{
@@ -57,40 +59,42 @@ func (h *ConfirmClaimCommandHandler) Handle(ctx context.Context, cmd ConfirmClai
 		return nil, errors.New("claim not found")
 	}
 
-	// 3. Validar status (deve estar PENDING)
-	if claim.Status != "PENDING" {
-		return nil, errors.New("claim must be PENDING to be confirmed")
+	// 3. Validar se pode confirmar (status deve permitir transição)
+	if !claim.Status.CanTransitionTo(valueobjects.ClaimStatusConfirmed) {
+		return nil, errors.New("claim cannot be confirmed in current status")
 	}
 
-	// 4. Validar deadline (não pode confirmar após 7 dias)
-	if time.Now().After(claim.DeadlineAt) {
+	// 4. Validar deadline (não pode confirmar após expiração)
+	if claim.IsExpired() {
 		return nil, errors.New("claim deadline exceeded")
 	}
 
-	// 5. Atualizar claim para CONFIRMED
-	now := time.Now()
-	claim.Status = "CONFIRMED"
-	claim.ResolvedAt = &now
-	claim.ResolutionNote = "Confirmed by user: " + cmd.ConfirmedBy
-	claim.UpdatedAt = now
-
-	// 6. Persistir mudança
-	if err := h.claimRepo.Update(ctx, claim); err != nil {
+	// 5. Confirmar claim usando domain method
+	reason := "Confirmed by user: " + cmd.ConfirmedBy
+	if err := claim.Confirm(reason); err != nil {
 		return nil, errors.New("failed to confirm claim: " + err.Error())
 	}
 
+	// 6. Persistir mudança
+	if err := h.claimRepo.Update(ctx, claim); err != nil {
+		return nil, errors.New("failed to update claim: " + err.Error())
+	}
+
 	// 7. Atualizar entry (marcar como em transferência)
-	entry, err := h.entryRepo.FindByID(ctx, claim.EntryID)
+	entry, err := h.entryRepo.FindByKey(ctx, claim.EntryKey)
 	if err != nil {
 		return nil, errors.New("entry not found")
 	}
-	entry.Status = "TRANSFERRING"
-	entry.UpdatedAt = now
+
+	// Marcar entry como tendo claim em andamento (usar string literal pois KeyStatus está duplicado)
+	entry.Status = "CLAIM_PENDING"
+	entry.UpdatedAt = time.Now()
 	if err := h.entryRepo.Update(ctx, entry); err != nil {
 		return nil, errors.New("failed to update entry status: " + err.Error())
 	}
 
 	// 8. Publicar evento (para iniciar workflow no Temporal)
+	now := time.Now()
 	event := DomainEvent{
 		EventType:     "ClaimConfirmed",
 		AggregateID:   claim.ID.String(),
@@ -98,9 +102,9 @@ func (h *ConfirmClaimCommandHandler) Handle(ctx context.Context, cmd ConfirmClai
 		OccurredAt:    now,
 		Payload: map[string]interface{}{
 			"claim_id":       claim.ID.String(),
-			"entry_id":       claim.EntryID.String(),
-			"claimer_ispb":   claim.ClaimerISPB,
-			"claimed_ispb":   claim.ClaimedISPB,
+			"entry_key":      claim.EntryKey,
+			"claimer_ispb":   claim.ClaimerParticipant.ISPB,
+			"donor_ispb":     claim.DonorParticipant.ISPB,
 			"bacen_claim_id": claim.BacenClaimID,
 			"confirmed_by":   cmd.ConfirmedBy,
 		},

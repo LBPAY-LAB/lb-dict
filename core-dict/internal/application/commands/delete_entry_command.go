@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/application/services"
 )
 
 // DeleteEntryCommand comando para deletar chave PIX
@@ -24,19 +27,19 @@ type DeleteEntryResult struct {
 
 // DeleteEntryCommandHandler handler para deleção de chave PIX
 type DeleteEntryCommandHandler struct {
-	entryRepo      EntryRepository
+	entryRepo      repositories.EntryRepository
 	eventPublisher EventPublisher
-	cacheService   CacheService
-	connectClient  ConnectClient      // NEW: gRPC client for RSFN
-	entryProducer  EntryEventProducer // NEW: Pulsar event producer
+	cacheService   services.CacheService
+	connectClient  services.ConnectClient // NEW: gRPC client for RSFN
+	entryProducer  EntryEventProducer     // NEW: Pulsar event producer
 }
 
 // NewDeleteEntryCommandHandler cria nova instância
 func NewDeleteEntryCommandHandler(
-	entryRepo EntryRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
-	cacheService CacheService,
-	connectClient ConnectClient,
+	cacheService services.CacheService,
+	connectClient services.ConnectClient,
 	entryProducer EntryEventProducer,
 ) *DeleteEntryCommandHandler {
 	return &DeleteEntryCommandHandler{
@@ -63,12 +66,12 @@ func (h *DeleteEntryCommandHandler) Handle(ctx context.Context, cmd DeleteEntryC
 	}
 
 	// 3. Validar status (apenas ACTIVE pode ser deletado)
-	if entry.Status != "ACTIVE" {
+	if entry.Status != entities.KeyStatusActive {
 		return nil, errors.New("only active entries can be deleted")
 	}
 
 	// 4. Atualizar status para DELETED (soft delete)
-	entry.Status = "DELETED"
+	entry.Status = entities.KeyStatusDeleted
 	now := time.Now()
 	entry.UpdatedAt = now
 
@@ -101,8 +104,8 @@ func (h *DeleteEntryCommandHandler) Handle(ctx context.Context, cmd DeleteEntryC
 	}
 
 	// 7. Invalidar cache
-	h.cacheService.InvalidateKey(ctx, "entry:"+entry.KeyValue)
-	h.cacheService.InvalidatePattern(ctx, "entries:account:"+entry.AccountID.String())
+	h.cacheService.Delete(ctx, "entry:"+entry.KeyValue)
+	h.cacheService.Invalidate(ctx, "entries:account:"+entry.AccountID.String())
 
 	return &DeleteEntryResult{
 		Success:   true,

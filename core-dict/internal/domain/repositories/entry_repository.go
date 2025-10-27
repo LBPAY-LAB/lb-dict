@@ -32,6 +32,10 @@ type EntryRepository interface {
 
 	// CountByAccount conta chaves de uma conta
 	CountByAccount(ctx context.Context, accountID uuid.UUID) (int64, error)
+
+	// CountByOwnerAndType conta chaves de um titular por tipo
+	// Usado para validar limites (max 5 CPF, 20 CNPJ, etc.)
+	CountByOwnerAndType(ctx context.Context, ownerTaxID string, keyType entities.KeyType) (int, error)
 }
 
 // Note: Other repository interfaces (AccountRepository, ClaimRepository, etc.)

@@ -277,6 +277,45 @@ func (r *PostgresClaimRepository) FindByParticipant(ctx context.Context, ispb st
 }
 
 // FindExpired finds expired claims (expires_at < now)
+// FindActiveByEntryID finds active claim by entry ID
+func (r *PostgresClaimRepository) FindActiveByEntryID(ctx context.Context, entryID uuid.UUID) (*entities.Claim, error) {
+	query := `
+		SELECT
+			c.id, c.claim_type, c.status,
+			c.claimer_ispb, c.owner_ispb,
+			c.claimer_account_id, c.owner_account_id,
+			c.bacen_claim_id, c.workflow_id,
+			c.completion_period_days, c.expires_at,
+			c.resolution_type, c.resolution_reason, c.resolution_date,
+			c.created_at, c.updated_at,
+			c.entry_key
+		FROM core_dict.claims c
+		JOIN core_dict.dict_entries e ON c.entry_key = e.key_value
+		WHERE e.id = $1
+		  AND c.status IN ('OPEN', 'WAITING_RESOLUTION', 'CONFIRMED')
+		  AND c.deleted_at IS NULL
+		ORDER BY c.created_at DESC
+		LIMIT 1
+	`
+
+	rows, err := r.pool.Query(ctx, query, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find active claim by entry ID: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, fmt.Errorf("no active claim found for entry ID: %s", entryID)
+	}
+
+	claim, err := scanClaim(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	return claim, nil
+}
+
 func (r *PostgresClaimRepository) FindExpired(ctx context.Context, limit int) ([]*entities.Claim, error) {
 	query := `
 		SELECT

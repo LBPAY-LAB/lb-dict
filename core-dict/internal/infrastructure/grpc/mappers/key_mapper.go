@@ -377,23 +377,23 @@ func parseUUID(s string) (uuid.UUID, error) {
 }
 
 // ============================================================================
-// Helper: KeyType conversion (proto enum → commands.KeyType string)
+// Helper: KeyType conversion (proto enum → entities.KeyType)
 // ============================================================================
 
-func mapProtoKeyTypeToCommandKeyType(kt commonv1.KeyType) commands.KeyType {
+func mapProtoKeyTypeToCommandKeyType(kt commonv1.KeyType) entities.KeyType {
 	switch kt {
 	case commonv1.KeyType_KEY_TYPE_CPF:
-		return commands.KeyTypeCPF
+		return entities.KeyTypeCPF
 	case commonv1.KeyType_KEY_TYPE_CNPJ:
-		return commands.KeyTypeCNPJ
+		return entities.KeyTypeCNPJ
 	case commonv1.KeyType_KEY_TYPE_EMAIL:
-		return commands.KeyTypeEmail
+		return entities.KeyTypeEmail
 	case commonv1.KeyType_KEY_TYPE_PHONE:
-		return commands.KeyTypePhone
+		return entities.KeyTypePhone
 	case commonv1.KeyType_KEY_TYPE_EVP:
-		return commands.KeyTypeEVP
+		return entities.KeyTypeEVP
 	default:
-		return ""
+		return entities.KeyTypeEVP // default fallback
 	}
 }
 

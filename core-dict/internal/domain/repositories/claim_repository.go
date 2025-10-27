@@ -44,6 +44,10 @@ type ClaimRepository interface {
 	// ExistsActiveClaim verifica se existe claim ativo para uma chave
 	ExistsActiveClaim(ctx context.Context, entryKey string) (bool, error)
 
+	// FindActiveByEntryID busca claim ativo por ID da chave
+	// Usado para validar se existe claim ativo antes de criar novo
+	FindActiveByEntryID(ctx context.Context, entryID uuid.UUID) (*entities.Claim, error)
+
 	// List lista reivindicações com paginação e filtros
 	List(ctx context.Context, filters ClaimFilters) ([]*entities.Claim, error)
 

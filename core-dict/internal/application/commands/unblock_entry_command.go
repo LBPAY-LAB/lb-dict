@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/application/services"
 )
 
 // UnblockEntryCommand comando para desbloquear chave PIX
@@ -18,22 +21,22 @@ type UnblockEntryCommand struct {
 // UnblockEntryResult resultado do comando
 type UnblockEntryResult struct {
 	EntryID     uuid.UUID
-	Status      string
+	Status      entities.KeyStatus
 	UnblockedAt time.Time
 }
 
 // UnblockEntryCommandHandler handler para desbloquear chave PIX
 type UnblockEntryCommandHandler struct {
-	entryRepo      EntryRepository
+	entryRepo      repositories.EntryRepository
 	eventPublisher EventPublisher
-	cacheService   CacheService
+	cacheService   services.CacheService
 }
 
 // NewUnblockEntryCommandHandler cria nova instância
 func NewUnblockEntryCommandHandler(
-	entryRepo EntryRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
-	cacheService CacheService,
+	cacheService services.CacheService,
 ) *UnblockEntryCommandHandler {
 	return &UnblockEntryCommandHandler{
 		entryRepo:      entryRepo,
@@ -56,13 +59,13 @@ func (h *UnblockEntryCommandHandler) Handle(ctx context.Context, cmd UnblockEntr
 	}
 
 	// 3. Validar status (apenas BLOCKED pode ser desbloqueado)
-	if entry.Status != "BLOCKED" {
+	if entry.Status != entities.KeyStatusBlocked {
 		return nil, errors.New("only blocked entries can be unblocked")
 	}
 
 	// 4. Atualizar status para ACTIVE
 	now := time.Now()
-	entry.Status = "ACTIVE"
+	entry.Status = entities.KeyStatusActive
 	entry.UpdatedAt = now
 
 	// 5. Persistir mudança
@@ -88,7 +91,7 @@ func (h *UnblockEntryCommandHandler) Handle(ctx context.Context, cmd UnblockEntr
 	}
 
 	// 7. Invalidar cache
-	h.cacheService.InvalidateKey(ctx, "entry:"+entry.KeyValue)
+	h.cacheService.Delete(ctx, "entry:"+entry.KeyValue)
 
 	return &UnblockEntryResult{
 		EntryID:     entry.ID,

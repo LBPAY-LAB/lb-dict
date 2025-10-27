@@ -370,16 +370,16 @@ func FormatClaimResponseMessage(status valueobjects.ClaimStatus) string {
 }
 
 // ============================================================================
-// Helper: ClaimType conversion (proto string → commands.ClaimType)
+// Helper: ClaimType conversion (proto string → valueobjects.ClaimType)
 // ============================================================================
 
-func mapProtoClaimTypeString(claimTypeStr string) commands.ClaimType {
+func mapProtoClaimTypeString(claimTypeStr string) valueobjects.ClaimType {
 	switch claimTypeStr {
 	case "OWNERSHIP":
-		return commands.ClaimTypeOwnership
+		return valueobjects.ClaimTypeOwnership
 	case "PORTABILITY":
-		return commands.ClaimTypePortability
+		return valueobjects.ClaimTypePortability
 	default:
-		return commands.ClaimTypePortability // Default
+		return valueobjects.ClaimTypePortability // Default
 	}
 }

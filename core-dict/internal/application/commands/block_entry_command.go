@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lbpay-lab/core-dict/internal/domain/entities"
+	"github.com/lbpay-lab/core-dict/internal/domain/repositories"
+	"github.com/lbpay-lab/core-dict/internal/application/services"
 )
 
 // BlockEntryCommand comando para bloquear chave PIX (infração, fraude, etc.)
@@ -19,22 +22,22 @@ type BlockEntryCommand struct {
 // BlockEntryResult resultado do comando
 type BlockEntryResult struct {
 	EntryID   uuid.UUID
-	Status    string
+	Status    entities.KeyStatus
 	BlockedAt time.Time
 }
 
 // BlockEntryCommandHandler handler para bloquear chave PIX
 type BlockEntryCommandHandler struct {
-	entryRepo      EntryRepository
+	entryRepo      repositories.EntryRepository
 	eventPublisher EventPublisher
-	cacheService   CacheService
+	cacheService   services.CacheService
 }
 
 // NewBlockEntryCommandHandler cria nova instância
 func NewBlockEntryCommandHandler(
-	entryRepo EntryRepository,
+	entryRepo repositories.EntryRepository,
 	eventPublisher EventPublisher,
-	cacheService CacheService,
+	cacheService services.CacheService,
 ) *BlockEntryCommandHandler {
 	return &BlockEntryCommandHandler{
 		entryRepo:      entryRepo,
@@ -57,13 +60,13 @@ func (h *BlockEntryCommandHandler) Handle(ctx context.Context, cmd BlockEntryCom
 	}
 
 	// 3. Validar status (apenas ACTIVE pode ser bloqueado)
-	if entry.Status != "ACTIVE" {
+	if entry.Status != entities.KeyStatusActive {
 		return nil, errors.New("only active entries can be blocked")
 	}
 
 	// 4. Atualizar status para BLOCKED
 	now := time.Now()
-	entry.Status = "BLOCKED"
+	entry.Status = entities.KeyStatusBlocked
 	entry.UpdatedAt = now
 
 	// 5. Persistir mudança
@@ -90,7 +93,7 @@ func (h *BlockEntryCommandHandler) Handle(ctx context.Context, cmd BlockEntryCom
 	}
 
 	// 7. Invalidar cache
-	h.cacheService.InvalidateKey(ctx, "entry:"+entry.KeyValue)
+	h.cacheService.Delete(ctx, "entry:"+entry.KeyValue)
 
 	return &BlockEntryResult{
 		EntryID:   entry.ID,
