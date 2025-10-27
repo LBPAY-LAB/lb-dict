@@ -513,8 +513,9 @@ func (h *CoreDictServiceHandler) RespondToClaim(ctx context.Context, req *corev1
 	}
 
 	// 3b. Map proto request → domain command based on response type
-	var claim *entities.Claim
-	var err error
+	var claimID uuid.UUID
+	var newStatus commonv1.ClaimStatus
+	var respondedAt time.Time
 
 	switch req.GetResponse() {
 	case corev1.RespondToClaimRequest_CLAIM_RESPONSE_ACCEPT:
@@ -526,11 +527,16 @@ func (h *CoreDictServiceHandler) RespondToClaim(ctx context.Context, req *corev1
 		}
 
 		// 3c. Execute ConfirmClaimCommandHandler
-		claim, err = h.confirmClaimCmd.Handle(ctx, cmd)
+		result, err := h.confirmClaimCmd.Handle(ctx, cmd)
 		if err != nil {
 			h.logger.Error("RespondToClaim: ConfirmClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
 			return nil, mappers.MapDomainErrorToGRPC(err)
 		}
+
+		// Extract fields from result
+		claimID = result.ClaimID
+		newStatus = mappers.MapDomainClaimStatusToProto(result.Status)
+		respondedAt = result.ConfirmedAt
 
 	case corev1.RespondToClaimRequest_CLAIM_RESPONSE_REJECT:
 		// Reject claim: Map to CancelClaimCommand
@@ -541,16 +547,26 @@ func (h *CoreDictServiceHandler) RespondToClaim(ctx context.Context, req *corev1
 		}
 
 		// 3c. Execute CancelClaimCommandHandler
-		claim, err = h.cancelClaimCmd.Handle(ctx, cmd)
+		result, err := h.cancelClaimCmd.Handle(ctx, cmd)
 		if err != nil {
 			h.logger.Error("RespondToClaim: CancelClaimCommand failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
 			return nil, mappers.MapDomainErrorToGRPC(err)
 		}
+
+		// Extract fields from result
+		claimID = result.ClaimID
+		newStatus = mappers.MapDomainClaimStatusToProto(result.Status)
+		respondedAt = result.CancelledAt
 	}
 
 	// 3d. Map domain result → proto response
-	h.logger.Info("RespondToClaim: success", "claim_id", claim.ID, "new_status", claim.Status, "user_id", userID)
-	return mappers.MapDomainClaimToProtoRespondToClaimResponse(claim), nil
+	h.logger.Info("RespondToClaim: success", "claim_id", claimID, "new_status", newStatus, "user_id", userID)
+	return &corev1.RespondToClaimResponse{
+		ClaimId:     claimID.String(),
+		NewStatus:   newStatus,
+		RespondedAt: timestamppb.New(respondedAt),
+		Message:     fmt.Sprintf("Claim %s successfully", req.GetResponse().String()),
+	}, nil
 }
 
 // CancelClaim allows the claimer to cancel their own claim
@@ -591,18 +607,18 @@ func (h *CoreDictServiceHandler) CancelClaim(ctx context.Context, req *corev1.Ca
 	}
 
 	// 3c. Execute command handler
-	claim, err := h.cancelClaimCmd.Handle(ctx, cmd)
+	result, err := h.cancelClaimCmd.Handle(ctx, cmd)
 	if err != nil {
 		h.logger.Error("CancelClaim: command failed", "error", err, "user_id", userID, "claim_id", req.GetClaimId())
 		return nil, mappers.MapDomainErrorToGRPC(err)
 	}
 
 	// 3d. Map domain result → proto response
-	h.logger.Info("CancelClaim: success", "claim_id", claim.ID, "status", claim.Status, "user_id", userID)
+	h.logger.Info("CancelClaim: success", "claim_id", result.ClaimID, "status", result.Status, "user_id", userID)
 	return &corev1.CancelClaimResponse{
-		ClaimId:     claim.ID.String(),
-		Status:      mappers.MapDomainClaimStatusToProto(claim.Status),
-		CancelledAt: timestamppb.New(claim.UpdatedAt),
+		ClaimId:     result.ClaimID.String(),
+		Status:      mappers.MapDomainClaimStatusToProto(result.Status),
+		CancelledAt: timestamppb.New(result.CancelledAt),
 	}, nil
 }
 
@@ -682,7 +698,7 @@ func (h *CoreDictServiceHandler) StartPortability(ctx context.Context, req *core
 	}
 
 	// 3c. Execute command handler
-	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	result, err := h.updateEntryCmd.Handle(ctx, cmd)
 	if err != nil {
 		h.logger.Error("StartPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "key_id", req.GetKeyId())
 		return nil, mappers.MapDomainErrorToGRPC(err)
@@ -692,14 +708,14 @@ func (h *CoreDictServiceHandler) StartPortability(ctx context.Context, req *core
 	// For now, just return success response
 
 	// 3d. Map domain result → proto response
-	h.logger.Info("StartPortability: success", "entry_id", entry.ID, "new_account_id", newAccountID, "user_id", userID)
+	h.logger.Info("StartPortability: success", "entry_id", result.EntryID, "new_account_id", newAccountID, "user_id", userID)
 	portabilityID := fmt.Sprintf("port-%d", time.Now().Unix()) // TODO: Generate proper UUID
 
 	return &corev1.StartPortabilityResponse{
 		PortabilityId: portabilityID,
-		KeyId:         entry.ID.String(),
+		KeyId:         result.EntryID.String(),
 		NewAccount:    nil, // TODO: Fetch account details and map to proto
-		StartedAt:     timestamppb.New(entry.UpdatedAt),
+		StartedAt:     timestamppb.New(result.UpdatedAt),
 		Message:       "Portability initiated. Awaiting confirmation.",
 	}, nil
 }
@@ -757,19 +773,19 @@ func (h *CoreDictServiceHandler) ConfirmPortability(ctx context.Context, req *co
 		// Status: "ACTIVE" (portability completed)
 	}
 
-	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	result, err := h.updateEntryCmd.Handle(ctx, cmd)
 	if err != nil {
 		h.logger.Error("ConfirmPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
 		return nil, mappers.MapDomainErrorToGRPC(err)
 	}
 
 	// 3d. Map domain result → proto response
-	h.logger.Info("ConfirmPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	h.logger.Info("ConfirmPortability: success", "entry_id", result.EntryID, "portability_id", req.GetPortabilityId(), "user_id", userID)
 	return &corev1.ConfirmPortabilityResponse{
 		PortabilityId: req.GetPortabilityId(),
-		KeyId:         entry.ID.String(),
-		Status:        mappers.MapDomainStatusToProto(entry.Status),
-		ConfirmedAt:   timestamppb.New(entry.UpdatedAt),
+		KeyId:         result.EntryID.String(),
+		Status:        commonv1.EntryStatus_ENTRY_STATUS_ACTIVE, // TODO: Map from UpdateEntryResult when Status field is added
+		ConfirmedAt:   timestamppb.New(result.UpdatedAt),
 	}, nil
 }
 
@@ -824,17 +840,17 @@ func (h *CoreDictServiceHandler) CancelPortability(ctx context.Context, req *cor
 		// Status: "ACTIVE" (back to normal)
 	}
 
-	entry, err := h.updateEntryCmd.Handle(ctx, cmd)
+	result, err := h.updateEntryCmd.Handle(ctx, cmd)
 	if err != nil {
 		h.logger.Error("CancelPortability: UpdateEntryCommand failed", "error", err, "user_id", userID, "portability_id", req.GetPortabilityId())
 		return nil, mappers.MapDomainErrorToGRPC(err)
 	}
 
 	// 3d. Map domain result → proto response
-	h.logger.Info("CancelPortability: success", "entry_id", entry.ID, "portability_id", req.GetPortabilityId(), "user_id", userID)
+	h.logger.Info("CancelPortability: success", "entry_id", result.EntryID, "portability_id", req.GetPortabilityId(), "user_id", userID)
 	return &corev1.CancelPortabilityResponse{
 		PortabilityId: req.GetPortabilityId(),
-		CancelledAt:   timestamppb.New(entry.UpdatedAt),
+		CancelledAt:   timestamppb.New(result.UpdatedAt),
 	}, nil
 }
 

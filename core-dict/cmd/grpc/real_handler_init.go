@@ -203,8 +203,11 @@ func initializeRealHandler(logger *slog.Logger) (*grpcinfra.CoreDictServiceHandl
 	claimRepo := database.NewPostgresClaimRepository(pgPool.Pool())
 	accountRepo := database.NewPostgresAccountRepository(pgPool.Pool())
 	auditRepo := database.NewPostgresAuditRepository(pgPool.Pool())
+	healthRepo := database.NewPostgresHealthRepository(pgPool.Pool(), redisClient)
+	statsRepo := database.NewPostgresStatisticsRepository(pgPool.Pool())
+	infractionRepo := database.NewPostgresInfractionRepository(pgPool.Pool())
 
-	logger.Info("✅ Repositories created successfully (4/4)")
+	logger.Info("✅ Repositories created successfully (7/7)")
 
 	// ============================================================
 	// 7. CREATE SERVICES
@@ -335,16 +338,28 @@ func initializeRealHandler(logger *slog.Logger) (*grpcinfra.CoreDictServiceHandl
 		cacheService,
 	)
 
-	// TODO: Implement these query handlers
-	var healthCheckQuery *queries.HealthCheckQueryHandler
-	var getStatisticsQuery *queries.GetStatisticsQueryHandler
-	var listInfractionsQuery *queries.ListInfractionsQueryHandler
-	var getAuditLogQuery *queries.GetAuditLogQueryHandler
+	// System query handlers (health, statistics, infractions, audit)
+	healthCheckQuery := queries.NewHealthCheckQueryHandler(
+		healthRepo,
+		connectClient,
+	)
 
-	logger.Info("✅ Query handlers initialized (6/10 functional, 4 pending)")
+	getStatisticsQuery := queries.NewGetStatisticsQueryHandler(
+		statsRepo,
+		cacheService,
+	)
 
-	// Suppress unused variable warnings for incomplete handlers
-	_, _, _, _ = healthCheckQuery, getStatisticsQuery, listInfractionsQuery, getAuditLogQuery
+	listInfractionsQuery := queries.NewListInfractionsQueryHandler(
+		infractionRepo,
+		cacheService,
+	)
+
+	getAuditLogQuery := queries.NewGetAuditLogQueryHandler(
+		auditRepo,
+		cacheService,
+	)
+
+	logger.Info("✅ Query handlers initialized (10/10 functional)")
 
 	// ============================================================
 	// 10. CREATE HANDLER WITH ALL DEPENDENCIES
@@ -380,7 +395,7 @@ func initializeRealHandler(logger *slog.Logger) (*grpcinfra.CoreDictServiceHandl
 
 	logger.Info("✅ CoreDictServiceHandler created successfully (REAL MODE)")
 	logger.Info("🎉 Real Mode initialization complete!")
-	logger.Info("📊 Status: 9/9 commands, 6/10 queries functional")
+	logger.Info("📊 Status: 9/9 commands, 10/10 queries functional")
 
 	return handler, cleanup, nil
 }
