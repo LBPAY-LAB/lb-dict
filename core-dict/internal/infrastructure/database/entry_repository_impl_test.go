@@ -28,7 +28,9 @@ func setupTestDB(t *testing.T) (*pgxpool.Pool, func()) {
 			"POSTGRES_PASSWORD": "test",
 			"POSTGRES_DB":       "core_dict_test",
 		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithStartupTimeout(60 * time.Second),
+		WaitingFor: wait.ForLog("database system is ready to accept connections").
+			WithOccurrence(2). // Wait for 2 occurrences (initial + recovery)
+			WithStartupTimeout(60 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -44,10 +46,30 @@ func setupTestDB(t *testing.T) (*pgxpool.Pool, func()) {
 	port, err := container.MappedPort(ctx, "5432")
 	require.NoError(t, err)
 
-	// Connect to DB
+	// Connect to DB with retry logic
 	connString := fmt.Sprintf("postgres://postgres:test@%s:%s/core_dict_test?sslmode=disable", host, port.Port())
-	pool, err := pgxpool.New(ctx, connString)
-	require.NoError(t, err)
+
+	var pool *pgxpool.Pool
+	maxRetries := 10
+	retryDelay := 500 * time.Millisecond
+
+	for i := 0; i < maxRetries; i++ {
+		pool, err = pgxpool.New(ctx, connString)
+		if err == nil {
+			// Try a ping to ensure connection is actually working
+			err = pool.Ping(ctx)
+			if err == nil {
+				break
+			}
+			pool.Close()
+		}
+
+		if i < maxRetries-1 {
+			t.Logf("Connection attempt %d/%d failed, retrying in %v...", i+1, maxRetries, retryDelay)
+			time.Sleep(retryDelay)
+		}
+	}
+	require.NoError(t, err, "Failed to connect to PostgreSQL after %d retries", maxRetries)
 
 	// Run schema creation
 	createSchema(t, pool)

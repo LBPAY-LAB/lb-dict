@@ -15,7 +15,12 @@ func TestRateLimiter_Allow_UnderLimit(t *testing.T) {
 	client, cleanup := setupRedisContainer(t)
 	defer cleanup()
 
-	limiter := cache.NewRateLimiter(client, 5, time.Second)
+	config := &cache.RateLimitConfig{
+		RequestsPerSecond: 5,
+		BurstSize:         5,
+		KeyPrefix:         "test:",
+	}
+	limiter := cache.NewRateLimiter(client, config)
 
 	// Make 5 requests (under limit)
 	for i := 0; i < 5; i++ {
@@ -29,7 +34,12 @@ func TestRateLimiter_Deny_OverLimit(t *testing.T) {
 	client, cleanup := setupRedisContainer(t)
 	defer cleanup()
 
-	limiter := cache.NewRateLimiter(client, 3, time.Second)
+	config := &cache.RateLimitConfig{
+		RequestsPerSecond: 3,
+		BurstSize:         3,
+		KeyPrefix:         "test:",
+	}
+	limiter := cache.NewRateLimiter(client, config)
 
 	// Make 3 requests (at limit)
 	for i := 0; i < 3; i++ {

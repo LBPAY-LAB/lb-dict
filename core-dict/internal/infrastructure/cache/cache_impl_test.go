@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/lbpay-lab/core-dict/internal/infrastructure/cache"
 )
@@ -15,6 +17,80 @@ import (
 type TestData struct {
 	Name  string `json:"name"`
 	Value int    `json:"value"`
+}
+
+// setupRedisContainer starts a Redis container for testing
+func setupRedisContainer(t *testing.T) (*cache.RedisClient, func()) {
+	ctx := context.Background()
+
+	// Start Redis container
+	req := testcontainers.ContainerRequest{
+		Image:        "redis:7-alpine",
+		ExposedPorts: []string{"6379/tcp"},
+		WaitingFor: wait.ForLog("Ready to accept connections").
+			WithStartupTimeout(60 * time.Second),
+	}
+
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	require.NoError(t, err)
+
+	// Get container host and port
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+
+	port, err := container.MappedPort(ctx, "6379")
+	require.NoError(t, err)
+
+	// Create Redis config
+	redisURL := fmt.Sprintf("redis://%s:%s/0", host, port.Port())
+	config := &cache.RedisConfig{
+		URL:              redisURL,
+		Password:         "",
+		DB:               0,
+		PoolSize:         10,
+		MinIdleConns:     2,
+		MaxRetries:       3,
+		ConnMaxIdleTime:  time.Minute * 5,
+		ConnMaxLifetime:  time.Hour,
+		DialTimeout:      time.Second * 10,
+		ReadTimeout:      time.Second * 10,
+		WriteTimeout:     time.Second * 10,
+		TLSEnabled:       false,
+		TLSSkipVerify:    false,
+	}
+
+	// Create Redis client with retry logic
+	var client *cache.RedisClient
+	maxRetries := 10
+	retryDelay := 500 * time.Millisecond
+
+	for i := 0; i < maxRetries; i++ {
+		client, err = cache.NewRedisClient(config)
+		if err == nil {
+			// Test connection
+			err = client.Ping(ctx)
+			if err == nil {
+				break
+			}
+			client.Close()
+		}
+
+		if i < maxRetries-1 {
+			t.Logf("Redis connection attempt %d/%d failed, retrying in %v...", i+1, maxRetries, retryDelay)
+			time.Sleep(retryDelay)
+		}
+	}
+	require.NoError(t, err, "Failed to connect to Redis after %d retries", maxRetries)
+
+	cleanup := func() {
+		client.Close()
+		container.Terminate(ctx)
+	}
+
+	return client, cleanup
 }
 
 func TestCache_Get_Hit(t *testing.T) {

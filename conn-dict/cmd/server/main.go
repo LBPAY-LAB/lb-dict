@@ -221,6 +221,16 @@ func main() {
 	// Initialize gRPC handlers
 	entryHandler := handlers.NewEntryHandler(entryUseCase, logger, tracer)
 
+	// Initialize QueryHandler for read-only Entry operations
+	queryHandler := handlers.NewQueryHandler(
+		entryRepo,
+		redisClient,
+		logger,
+		tracer,
+	)
+
+	logger.Info("QueryHandler initialized successfully")
+
 	// Initialize Claim and Infraction services (direct repository access for now)
 	claimService := services.NewClaimService(temporalClient, claimRepo, logger)
 	infractionService := services.NewInfractionService(temporalClient, infractionRepo, logger)
@@ -241,6 +251,7 @@ func main() {
 		EntryHandler:      entryHandler,
 		ClaimHandler:      claimHandler,
 		InfractionHandler: infractionHandler,
+		QueryHandler:      queryHandler,
 	}
 
 	grpcServerInstance := grpc.NewServer(logger, serverConfig)

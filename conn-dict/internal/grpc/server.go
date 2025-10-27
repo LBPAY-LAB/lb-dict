@@ -12,11 +12,9 @@ import (
 	"github.com/lbpay-lab/conn-dict/internal/grpc/interceptors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -28,6 +26,7 @@ type Server struct {
 	entryHandler      *handlers.EntryHandler
 	claimHandler      *handlers.ClaimHandler
 	infractionHandler *handlers.InfractionHandler
+	queryHandler      *handlers.QueryHandler
 	healthServer      *health.Server
 	devMode           bool
 }
@@ -39,6 +38,7 @@ type ServerConfig struct {
 	EntryHandler      *handlers.EntryHandler
 	ClaimHandler      *handlers.ClaimHandler
 	InfractionHandler *handlers.InfractionHandler
+	QueryHandler      *handlers.QueryHandler
 }
 
 // NewServer creates a new Connect gRPC server instance
@@ -53,6 +53,7 @@ func NewServer(logger *logrus.Logger, config *ServerConfig) *Server {
 		entryHandler:      config.EntryHandler,
 		claimHandler:      config.ClaimHandler,
 		infractionHandler: config.InfractionHandler,
+		queryHandler:      config.QueryHandler,
 		devMode:           config.DevMode,
 	}
 }
@@ -86,6 +87,7 @@ func (s *Server) Start(ctx context.Context) error {
 		entryHandler:      s.entryHandler,
 		claimHandler:      s.claimHandler,
 		infractionHandler: s.infractionHandler,
+		queryHandler:      s.queryHandler,
 		logger:            s.logger,
 	})
 	s.logger.Info("Registered ConnectService with all handlers")
@@ -158,26 +160,21 @@ type connectServiceServer struct {
 	entryHandler      *handlers.EntryHandler
 	claimHandler      *handlers.ClaimHandler
 	infractionHandler *handlers.InfractionHandler
+	queryHandler      *handlers.QueryHandler
 	logger            *logrus.Logger
 }
 
-// Entry Operations
-// Note: These methods are NOT IMPLEMENTED yet because EntryHandler only implements
-// BridgeService (internal operations), not ConnectService (core-dict operations).
-// TODO: Create a separate query repository or use case for read-only Entry operations.
+// Entry Operations (delegated to QueryHandler)
 func (s *connectServiceServer) GetEntry(ctx context.Context, req *connectv1.GetEntryRequest) (*connectv1.GetEntryResponse, error) {
-	s.logger.Warn("GetEntry not implemented - TODO: implement read-only entry queries")
-	return nil, status.Error(codes.Unimplemented, "GetEntry not implemented yet - pending read-only query layer")
+	return s.queryHandler.GetEntry(ctx, req)
 }
 
 func (s *connectServiceServer) GetEntryByKey(ctx context.Context, req *connectv1.GetEntryByKeyRequest) (*connectv1.GetEntryByKeyResponse, error) {
-	s.logger.Warn("GetEntryByKey not implemented - TODO: implement read-only entry queries")
-	return nil, status.Error(codes.Unimplemented, "GetEntryByKey not implemented yet - pending read-only query layer")
+	return s.queryHandler.GetEntryByKey(ctx, req)
 }
 
 func (s *connectServiceServer) ListEntries(ctx context.Context, req *connectv1.ListEntriesRequest) (*connectv1.ListEntriesResponse, error) {
-	s.logger.Warn("ListEntries not implemented - TODO: implement read-only entry queries")
-	return nil, status.Error(codes.Unimplemented, "ListEntries not implemented yet - pending read-only query layer")
+	return s.queryHandler.ListEntries(ctx, req)
 }
 
 // Claim Operations

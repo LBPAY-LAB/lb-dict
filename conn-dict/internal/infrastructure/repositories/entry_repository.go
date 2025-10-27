@@ -301,13 +301,31 @@ func (r *EntryRepository) ListByParticipant(ctx context.Context, ispb string, li
 	return entries, nil
 }
 
+// CountByParticipant counts total entries for a participant (ISPB)
+func (r *EntryRepository) CountByParticipant(ctx context.Context, ispb string) (int64, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM entries
+		WHERE participant = $1 AND deleted_at IS NULL
+	`
+
+	var count int64
+	err := r.db.QueryRow(ctx, query, ispb).Scan(&count)
+	if err != nil {
+		r.logger.WithError(err).Errorf("Failed to count entries for participant: %s", ispb)
+		return 0, fmt.Errorf("failed to count entries: %w", err)
+	}
+
+	return count, nil
+}
+
 // HasActiveKey checks if a PIX key already exists and is active
 func (r *EntryRepository) HasActiveKey(ctx context.Context, key string) (bool, error) {
 	query := `
-		SELECT COUNT(*) 
-		FROM entries 
-		WHERE key = $1 
-		  AND status = 'ACTIVE' 
+		SELECT COUNT(*)
+		FROM entries
+		WHERE key = $1
+		  AND status = 'ACTIVE'
 		  AND deleted_at IS NULL
 	`
 
