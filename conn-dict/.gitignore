@@ -7,6 +7,11 @@
 bin/
 dist/
 
+# Compiled binaries (root level)
+server
+worker
+main
+
 # Test binary, built with `go test -c`
 *.test
 
