@@ -564,9 +564,9 @@
 
 ---
 
-**Última Atualização**: 2025-10-27 14:30 BRT por Claude Sonnet 4.5 (Project Manager)
+**Última Atualização**: 2025-10-27 19:00 BRT por Claude Sonnet 4.5 (Project Manager)
 **Próxima Atualização**: 2025-10-28 (quando houver nova sessão)
-**Status**: ✅ **conn-dict 100% PRONTO - Aguardando core-dict**
+**Status**: ✅ **conn-dict 100% + conn-bridge 100% + ARQUITETURA VALIDADA**
 
 ---
 
@@ -629,3 +629,85 @@
 **Última Atualização**: 2025-10-27 15:00 BRT
 **Status Global**: ✅ **PRONTO PARA CORE-DICT INICIAR**
 **Próximo Marco**: Core DICT integração com Connect via contratos formais
+
+---
+
+## 🎉 ATUALIZAÇÃO ARQUITETURAL - 2025-10-27 19:00 BRT
+
+### ✅ ANÁLISE ARQUITETURAL CRÍTICA COMPLETA
+
+**Documento Criado**: [ANALISE_SEPARACAO_RESPONSABILIDADES.md](ANALISE_SEPARACAO_RESPONSABILIDADES.md) (842 LOC)
+
+**Pergunta Fundamental Respondida**:
+> "Workflows de negócio complexos (como Reivindicações) devem estar no Core-Dict ou Conn-Dict?"
+
+**Resposta Definitiva**:
+- ✅ **Workflows de Negócio → CORE-DICT**
+- ✅ **Infraestrutura Técnica → CONN-DICT**
+- ✅ **Adaptação de Protocolo → CONN-BRIDGE**
+
+### Princípios Arquiteturais Aplicados
+
+1. **Domain-Driven Design (DDD)**
+   - Bounded Contexts claros: Core (Business), Connect (Integration), Bridge (Adapter)
+
+2. **Hexagonal Architecture (Ports & Adapters)**
+   - Core como hexágono central
+   - Connect e Bridge como adapters externos
+
+3. **Separation of Concerns (SoC)**
+   - Business logic isolada de infraestrutura
+   - Infraestrutura isolada de protocolo
+
+### Golden Rule Estabelecida
+
+```
+"Se a lógica precisa de CONTEXTO DE NEGÓCIO para decidir,
+ ela pertence ao CORE-DICT."
+
+"Se a lógica é INFRAESTRUTURA TÉCNICA reutilizável,
+ ela pertence ao CONN-DICT."
+
+"Se a lógica é ADAPTAÇÃO DE PROTOCOLO para Bacen,
+ ela pertence ao CONN-BRIDGE."
+```
+
+### Exemplos Práticos Documentados
+
+#### ClaimWorkflow → CORE-DICT ✅
+**Por quê?**
+- Requer validações de negócio (ownership, fraude, histórico)
+- Integra múltiplos domínios (Fraud, User, Notification, Account)
+- Mantém estado rico de negócio (audit logs, compliance)
+- Toma decisões baseadas em contexto (histórico transacional)
+- Orquestra processos complexos multi-step
+
+#### Connection Pool Management → CONN-DICT ✅
+**Por quê?**
+- Concern técnico de infraestrutura
+- Gerencia rate limiting Bacen (1000 TPS)
+- Transparente para Core-Dict
+- Reutilizável para qualquer tipo de request
+
+#### SOAP/XML Transformation → CONN-BRIDGE ✅
+**Por quê?**
+- Transformação técnica de protocolo (gRPC ↔ SOAP)
+- Core e Connect não devem conhecer detalhes SOAP
+- Isolamento de certificados ICP-Brasil A3
+- Único componente que "fala" com Bacen
+
+### Documentação de Apoio
+
+- [ANALISE_SEPARACAO_RESPONSABILIDADES.md](ANALISE_SEPARACAO_RESPONSABILIDADES.md) - Análise completa
+- [STATUS_GLOBAL_ARQUITETURA_FINALIZADO.md](STATUS_GLOBAL_ARQUITETURA_FINALIZADO.md) - Status global consolidado
+
+### Impacto para core-dict (Janela Paralela)
+
+**AGORA CLARO**:
+- ✅ ClaimWorkflow implementar no Core-Dict
+- ✅ PortabilityWorkflow implementar no Core-Dict
+- ✅ Validações de negócio no Core-Dict
+- ✅ Chamar Conn-Dict apenas para executar no Bacen (infraestrutura)
+- ✅ Conn-Dict gerencia connection pool, retry, circuit breaker (transparente)
+
+**Resultado**: Arquitetura limpa, testável, manutenível, e alinhada com princípios DDD/Hexagonal/SoC
