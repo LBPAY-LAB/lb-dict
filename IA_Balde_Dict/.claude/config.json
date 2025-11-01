@@ -1,0 +1,657 @@
+{
+  "project": {
+    "name": "DICT Rate Limit Monitoring System",
+    "version": "1.0.0",
+    "description": "Sistema de monitoramento de rate limits do DICT BACEN para LBPay PSP",
+    "repository": "github.com/lb-conn/connector-dict",
+    "module": "github.com/lb-conn/connector-dict",
+    "go_version": "1.21",
+    "last_updated": "2025-11-01"
+  },
+
+  "architecture": {
+    "pattern": "Clean Architecture + Event-Driven + Temporal Workflows",
+    "layers": [
+      "domain (entities, pure functions)",
+      "application (use cases, ports/interfaces)",
+      "infrastructure (database, grpc, temporal, pulsar, metrics)",
+      "handlers (no handlers needed - Temporal only)"
+    ],
+    "communication_flow": "Temporal Workflow → Bridge gRPC → DICT BACEN REST API",
+    "implementation_scope": {
+      "implement": [
+        "apps/orchestration-worker (Temporal workflows & activities)",
+        "domain/ratelimit (entities & calculators)",
+        "infrastructure/database/repositories/ratelimit",
+        "infrastructure/grpc/ratelimit",
+        "infrastructure/temporal/workflows/ratelimit",
+        "infrastructure/temporal/activities/ratelimit",
+        "infrastructure/pulsar/ratelimit",
+        "infrastructure/metrics/ratelimit"
+      ],
+      "do_not_implement": [
+        "apps/dict (NO REST endpoints needed)",
+        "Bridge gRPC server (already exists)",
+        "Core-Dict consumer (already exists)"
+      ]
+    }
+  },
+
+  "database": {
+    "provider": "PostgreSQL",
+    "driver": "pgx/v5",
+    "connection_pool": "pgxpool.Pool",
+    "migration_tool": "Goose",
+    "migration_path": "apps/orchestration-worker/infrastructure/database/migrations",
+    "timezone": "UTC (forced everywhere)",
+    "tables": {
+      "dict_rate_limit_policies": {
+        "description": "Static rate limit policy configurations from DICT",
+        "partitioned": false,
+        "retention": "indefinite (updated periodically)"
+      },
+      "dict_rate_limit_states": {
+        "description": "Time-series snapshots of token bucket states",
+        "partitioned": true,
+        "partition_type": "RANGE by created_at (monthly)",
+        "retention": "13 months",
+        "snapshot_frequency": "5 minutes"
+      },
+      "dict_rate_limit_alerts": {
+        "description": "Alert history for threshold violations",
+        "partitioned": false,
+        "retention": "indefinite (audit trail)"
+      }
+    },
+    "partitioning": {
+      "enabled": true,
+      "table": "dict_rate_limit_states",
+      "strategy": "monthly",
+      "retention_months": 13,
+      "auto_create_next_month": true,
+      "auto_drop_old_partitions": true,
+      "partition_function": "create_dict_rate_limit_state_partition(DATE)",
+      "cleanup_function": "drop_old_partitions()"
+    },
+    "maintenance": {
+      "function": "perform_dict_rate_limit_maintenance()",
+      "schedule": "monthly (called by Temporal workflow)",
+      "tasks": [
+        "create next month partition",
+        "drop partitions older than 13 months",
+        "vacuum and analyze tables"
+      ]
+    }
+  },
+
+  "domain": {
+    "location": "domain/ratelimit",
+    "entities": [
+      "Policy (static configuration)",
+      "PolicyState (time-series snapshot)",
+      "Alert (threshold violation)"
+    ],
+    "value_objects": [
+      "AlertSeverity (WARNING | CRITICAL)",
+      "ThresholdStatus (OK | WARNING | CRITICAL)"
+    ],
+    "calculators": [
+      "ConsumptionRateCalculator (tokens per minute)",
+      "RecoveryETACalculator (seconds to full recovery)",
+      "ExhaustionProjectionCalculator (seconds to exhaustion)",
+      "Error404RateCalculator (percentage of 404 errors)",
+      "ThresholdAnalyzer (determine severity)",
+      "CategoryChangeDetector (PSP category changes)"
+    ],
+    "pure_functions": true,
+    "no_external_dependencies": true,
+    "immutable_entities": false
+  },
+
+  "thresholds": {
+    "warning": {
+      "remaining_percent": 20,
+      "utilization_percent": 80,
+      "severity": "WARNING",
+      "description": "20% or less tokens remaining (80%+ utilized)"
+    },
+    "critical": {
+      "remaining_percent": 10,
+      "utilization_percent": 90,
+      "severity": "CRITICAL",
+      "description": "10% or less tokens remaining (90%+ utilized)"
+    },
+    "auto_resolution": {
+      "warning_threshold": 80,
+      "critical_threshold": 90,
+      "description": "Alerts auto-resolve when utilization drops below threshold"
+    }
+  },
+
+  "bridge_integration": {
+    "repository": "github.com/lb-conn/rsfn-connect-bacen-bridge",
+    "proto_location": "proto/bacen/dict/v2/rate_limit_service.proto",
+    "service": "RateLimitService",
+    "endpoints": {
+      "get_all_policies": {
+        "method": "GetRateLimitPolicies",
+        "request": "GetRateLimitPoliciesRequest (empty)",
+        "response": "GetRateLimitPoliciesResponse",
+        "returns": [
+          "response_time (timestamp from DICT)",
+          "category (PSP category A-H)",
+          "policies[] (array of RateLimitPolicy)"
+        ]
+      },
+      "get_single_policy": {
+        "method": "GetRateLimitPolicy",
+        "request": "GetRateLimitPolicyRequest (policy_name)",
+        "response": "GetRateLimitPolicyResponse",
+        "returns": [
+          "response_time (timestamp from DICT)",
+          "category (PSP category A-H)",
+          "policy (single RateLimitPolicy)"
+        ]
+      }
+    },
+    "proto_fields": {
+      "RateLimitPolicy": [
+        "name (endpoint identifier)",
+        "available_tokens (current balance)",
+        "capacity (max tokens)",
+        "refill_tokens (tokens per period)",
+        "refill_period_sec (refill period in seconds)",
+        "policy_category (optional, endpoint-specific category)"
+      ]
+    },
+    "connection": {
+      "reuse_existing": "grpcGateway from orchestration-worker",
+      "mtls_enabled": true,
+      "secrets_source": "AWS Secrets Manager"
+    },
+    "error_handling": {
+      "retryable_errors": [
+        "Unavailable (code 14)",
+        "DeadlineExceeded (code 4)"
+      ],
+      "non_retryable_errors": [
+        "Unauthenticated (code 16)",
+        "PermissionDenied (code 7)",
+        "NotFound (code 5)",
+        "Internal (code 13)"
+      ]
+    }
+  },
+
+  "temporal": {
+    "version": "1.x",
+    "namespace": "lb-conn",
+    "task_queue": "dict-workflows",
+    "workflows": {
+      "monitor_policies_workflow": {
+        "id": "dict-rate-limit-monitor-cron",
+        "type": "cron",
+        "schedule": "*/5 * * * *",
+        "description": "Monitors rate limit policies every 5 minutes",
+        "activities": [
+          "GetPoliciesActivity (call Bridge)",
+          "StorePoliciesActivity (upsert to DB)",
+          "StoreStatesActivity (save snapshots)",
+          "EnrichMetricsActivity (calculate consumption, ETA, projection)",
+          "AnalyzeThresholdsActivity (check WARNING/CRITICAL)",
+          "CreateAlertsActivity (if thresholds breached)",
+          "AutoResolveAlertsActivity (if tokens recovered)",
+          "CleanupOldDataActivity (if time for maintenance)"
+        ]
+      }
+    },
+    "activities": {
+      "timeout": {
+        "start_to_close": "30s (Bridge calls)",
+        "schedule_to_start": "10s",
+        "schedule_to_close": "1m"
+      },
+      "retry_policy": {
+        "initial_interval": "2s",
+        "backoff_coefficient": 2.0,
+        "maximum_interval": "1m",
+        "maximum_attempts": 5,
+        "non_retryable_error_types": [
+          "BridgeAuthError",
+          "BridgePermissionError",
+          "PolicyNotFoundError"
+        ]
+      }
+    },
+    "registration": {
+      "location": "apps/orchestration-worker/setup/temporal.go",
+      "register_workflows": true,
+      "register_activities": true,
+      "start_cron_on_startup": true
+    }
+  },
+
+  "pulsar": {
+    "provider": "Apache Pulsar",
+    "cluster": "lb-conn",
+    "namespace": "dict",
+    "topics": {
+      "rate_limit_alerts": {
+        "name": "persistent://lb-conn/dict/rate-limit-alerts",
+        "description": "Rate limit alerts published for Core-Dict consumption",
+        "schema": "RateLimitAlertEvent (JSON)",
+        "producers": [
+          "orchestration-worker (CreateAlertsActivity)"
+        ],
+        "consumers": [
+          "core-dict (alert notification consumer)"
+        ]
+      }
+    },
+    "event_types": {
+      "alert_created": {
+        "type": "rate_limit.alert.created",
+        "severity": ["WARNING", "CRITICAL"],
+        "fields": [
+          "event_id",
+          "event_type",
+          "timestamp",
+          "endpoint_id",
+          "severity",
+          "available_tokens",
+          "capacity",
+          "utilization_percent",
+          "recovery_eta_seconds",
+          "exhaustion_projection_seconds",
+          "psp_category",
+          "message"
+        ]
+      },
+      "alert_resolved": {
+        "type": "rate_limit.alert.resolved",
+        "fields": [
+          "event_id",
+          "event_type",
+          "timestamp",
+          "endpoint_id",
+          "alert_id",
+          "resolution_notes"
+        ]
+      }
+    },
+    "producer_config": {
+      "compression": "LZ4",
+      "batching_enabled": true,
+      "batching_max_messages": 100,
+      "batching_max_publish_delay": "10ms"
+    }
+  },
+
+  "prometheus": {
+    "enabled": true,
+    "port": 9090,
+    "path": "/metrics",
+    "metrics": {
+      "gauges": [
+        {
+          "name": "dict_rate_limit_available_tokens",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Current available tokens in bucket"
+        },
+        {
+          "name": "dict_rate_limit_capacity",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Maximum bucket capacity"
+        },
+        {
+          "name": "dict_rate_limit_utilization_percent",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Percentage of capacity utilized"
+        },
+        {
+          "name": "dict_rate_limit_consumption_rate_per_minute",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Token consumption rate (tokens/minute)"
+        },
+        {
+          "name": "dict_rate_limit_recovery_eta_seconds",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Estimated seconds to full token recovery"
+        },
+        {
+          "name": "dict_rate_limit_exhaustion_projection_seconds",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Estimated seconds to token exhaustion"
+        },
+        {
+          "name": "dict_rate_limit_error_404_rate",
+          "labels": ["endpoint_id", "psp_category"],
+          "description": "Percentage of 404 errors in recent requests"
+        }
+      ],
+      "counters": [
+        {
+          "name": "dict_rate_limit_alerts_created_total",
+          "labels": ["endpoint_id", "severity", "psp_category"],
+          "description": "Total number of alerts created"
+        },
+        {
+          "name": "dict_rate_limit_alerts_resolved_total",
+          "labels": ["endpoint_id", "severity", "psp_category"],
+          "description": "Total number of alerts resolved"
+        }
+      ],
+      "histograms": [
+        {
+          "name": "dict_rate_limit_monitoring_duration_seconds",
+          "labels": ["operation"],
+          "buckets": [0.01, 0.05, 0.1, 0.5, 1, 5, 10],
+          "description": "Duration of monitoring operations"
+        }
+      ]
+    }
+  },
+
+  "observability": {
+    "provider": "OpenTelemetry",
+    "tracing": {
+      "enabled": true,
+      "tracer_name": "github.com/lb-conn/connector-dict",
+      "instrumentation": [
+        "gRPC client calls",
+        "Database queries",
+        "Temporal activities",
+        "Pulsar publishing"
+      ]
+    },
+    "logging": {
+      "level": "info",
+      "format": "json",
+      "fields": [
+        "timestamp (UTC)",
+        "level",
+        "message",
+        "trace_id",
+        "span_id",
+        "endpoint_id",
+        "psp_category"
+      ]
+    }
+  },
+
+  "secrets_management": {
+    "provider": "AWS Secrets Manager",
+    "region": "us-east-1",
+    "secrets": {
+      "bridge_mtls": {
+        "secret_id": "lb-conn/dict/bridge/mtls",
+        "description": "mTLS certificates for Bridge communication",
+        "fields": [
+          "client_cert (PEM)",
+          "client_key (PEM)",
+          "ca_cert (PEM)",
+          "server_name (dict.pi.rsfn.net.br)"
+        ]
+      },
+      "bridge_endpoint": {
+        "secret_id": "lb-conn/dict/bridge/endpoint",
+        "description": "Bridge gRPC endpoint configuration",
+        "fields": [
+          "host (bridge.lb-conn.svc.cluster.local)",
+          "port (50051)"
+        ]
+      },
+      "database_credentials": {
+        "secret_id": "lb-conn/dict/database/credentials",
+        "description": "PostgreSQL connection credentials",
+        "fields": [
+          "host",
+          "port",
+          "database",
+          "username",
+          "password",
+          "ssl_mode (require)"
+        ]
+      }
+    },
+    "iam_permissions": [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret"
+    ]
+  },
+
+  "testing": {
+    "framework": "testify",
+    "coverage_target": "85%",
+    "unit_tests": {
+      "location": "*_test.go (same package)",
+      "mocking": "mockgen for interfaces",
+      "focus": [
+        "Domain entity validation",
+        "Calculator pure functions",
+        "Repository operations",
+        "Bridge error handling"
+      ]
+    },
+    "integration_tests": {
+      "location": "apps/orchestration-worker/tests/integration/ratelimit/",
+      "containers": "Testcontainers for PostgreSQL",
+      "mocks": [
+        "Bridge gRPC (mock server)",
+        "Pulsar (in-memory broker)"
+      ],
+      "focus": [
+        "End-to-end workflow execution",
+        "Database partitioning queries",
+        "Alert creation and auto-resolution",
+        "Temporal workflow replay"
+      ]
+    },
+    "test_data": {
+      "psp_category": "A",
+      "sample_policies": [
+        "ENTRIES_WRITE (36000 capacity, 1200/60s refill)",
+        "CLAIMS_WRITE (36000 capacity, 1200/60s refill)",
+        "ENTRIES_READ_PARTICIPANT_ANTISCAN (50000 capacity, 25000/60s refill)"
+      ],
+      "threshold_scenarios": [
+        "OK state (50% utilization)",
+        "WARNING state (85% utilization)",
+        "CRITICAL state (95% utilization)"
+      ]
+    }
+  },
+
+  "deployment": {
+    "container_name": "orchestration-worker",
+    "dockerfile": "apps/orchestration-worker/Dockerfile",
+    "base_image": "golang:1.21-alpine",
+    "runtime_image": "alpine:latest",
+    "ports": [
+      "9090 (Prometheus metrics)",
+      "8080 (health checks)"
+    ],
+    "environment_variables": {
+      "required": [
+        "AWS_REGION",
+        "AWS_SECRET_BRIDGE_MTLS_ID",
+        "AWS_SECRET_BRIDGE_ENDPOINT_ID",
+        "AWS_SECRET_DATABASE_CREDENTIALS_ID",
+        "TEMPORAL_HOST",
+        "TEMPORAL_NAMESPACE",
+        "PULSAR_URL"
+      ],
+      "optional": [
+        "LOG_LEVEL (default: info)",
+        "METRICS_PORT (default: 9090)",
+        "HEALTH_CHECK_PORT (default: 8080)"
+      ]
+    },
+    "health_checks": {
+      "liveness": "/health/live",
+      "readiness": "/health/ready",
+      "startup": "/health/startup"
+    }
+  },
+
+  "coding_standards": {
+    "language": "Go",
+    "style_guide": "Effective Go + Go Code Review Comments",
+    "linter": "golangci-lint",
+    "formatting": "gofmt + goimports",
+    "naming_conventions": {
+      "files": "snake_case (policy_repository.go)",
+      "packages": "lowercase single word (ratelimit)",
+      "types": "PascalCase (PolicyState)",
+      "functions": "PascalCase for exported (GetAllPolicies), camelCase for private (scanPolicy)",
+      "constants": "PascalCase or SCREAMING_SNAKE_CASE",
+      "variables": "camelCase"
+    },
+    "error_handling": {
+      "wrap_errors": "fmt.Errorf with %w",
+      "custom_errors": "domain-specific error types",
+      "context_propagation": "always pass context.Context as first parameter"
+    },
+    "comments": {
+      "public_apis": "always document with // comments",
+      "complex_logic": "explain why, not what",
+      "todos": "use // TODO: with issue tracker reference"
+    }
+  },
+
+  "git_workflow": {
+    "branch_strategy": "feature branches from main",
+    "branch_naming": "feature/rate-limit-monitoring",
+    "commit_messages": {
+      "format": "type(scope): description",
+      "types": [
+        "feat (new feature)",
+        "fix (bug fix)",
+        "refactor (code refactoring)",
+        "test (adding tests)",
+        "docs (documentation)",
+        "chore (maintenance)"
+      ],
+      "examples": [
+        "feat(ratelimit): add PolicyRepository with pgx",
+        "feat(ratelimit): implement MonitorPoliciesWorkflow",
+        "test(ratelimit): add unit tests for Calculator",
+        "docs(ratelimit): update implementation progress report"
+      ]
+    }
+  },
+
+  "psp_category": {
+    "current": "A",
+    "note": "Unknown until first DICT query - use 'A' for development/testing",
+    "valid_values": ["A", "B", "C", "D", "E", "F", "G", "H"],
+    "description": "PSP category determines rate limit tiers per BACEN regulations"
+  },
+
+  "calculated_metrics": {
+    "consumption_rate_per_minute": {
+      "formula": "(previous_tokens - current_tokens) / elapsed_minutes",
+      "unit": "tokens/minute",
+      "requires": "previous state snapshot"
+    },
+    "recovery_eta_seconds": {
+      "formula": "(capacity - available_tokens) / refill_rate_per_second",
+      "unit": "seconds",
+      "requires": "current state only"
+    },
+    "exhaustion_projection_seconds": {
+      "formula": "available_tokens / consumption_rate_per_second",
+      "unit": "seconds",
+      "requires": "consumption_rate_per_minute > 0",
+      "note": "Returns 0 if no consumption or tokens increasing"
+    },
+    "error_404_rate": {
+      "formula": "TBD (requires request history tracking)",
+      "unit": "percentage (0-100)",
+      "status": "placeholder implementation (returns 0)"
+    }
+  },
+
+  "edge_cases": {
+    "first_snapshot": {
+      "consumption_rate": "Cannot calculate (no previous state) - set to 0",
+      "action": "Skip consumption-based metrics on first run"
+    },
+    "tokens_increasing": {
+      "consumption_rate": "Negative rate means refill > consumption - set to 0",
+      "exhaustion_projection": "No exhaustion projected - set to 0"
+    },
+    "full_capacity": {
+      "recovery_eta": "Already at full capacity - set to 0"
+    },
+    "category_change": {
+      "detection": "Compare current vs previous PSP category",
+      "action": "Log warning, update all policies"
+    },
+    "partition_gap": {
+      "scenario": "Query spans non-existent partition",
+      "handling": "PostgreSQL handles automatically, no error"
+    }
+  },
+
+  "validation_rules": {
+    "policy": {
+      "endpoint_id": "required, non-empty string",
+      "capacity": "required, > 0",
+      "refill_tokens": "required, > 0",
+      "refill_period_sec": "required, > 0",
+      "psp_category": "optional, must be A-H if provided"
+    },
+    "policy_state": {
+      "available_tokens": "required, >= 0, <= capacity",
+      "capacity": "required, > 0",
+      "response_timestamp": "required, UTC timezone",
+      "created_at": "required, UTC timezone"
+    },
+    "alert": {
+      "severity": "required, WARNING or CRITICAL only",
+      "threshold_percent": "required, 10 or 20 only",
+      "utilization_percent": "must match severity (WARNING >= 80%, CRITICAL >= 90%)"
+    }
+  },
+
+  "assumptions": {
+    "bridge_availability": "Bridge gRPC endpoints exist and are operational",
+    "dict_api_stability": "DICT BACEN API conforms to documented spec",
+    "postgres_version": "PostgreSQL 14+ (for partitioning features)",
+    "temporal_version": "Temporal 1.x (not 2.x)",
+    "pulsar_cluster": "Pulsar cluster is configured and accessible",
+    "aws_permissions": "IAM role has Secrets Manager read permissions",
+    "network_connectivity": "Orchestration worker can reach Bridge, Temporal, Pulsar, PostgreSQL"
+  },
+
+  "out_of_scope": {
+    "items": [
+      "Dict API REST endpoints modification",
+      "Bridge gRPC server implementation",
+      "Core-Dict Pulsar consumer implementation",
+      "Infrastructure setup (PostgreSQL, Pulsar, Temporal clusters)",
+      "AWS Secrets Manager secret creation",
+      "Kubernetes deployment manifests",
+      "Grafana dashboards (Prometheus only)",
+      "PagerDuty integration (alerts only to Prometheus)",
+      "Request-level 404 tracking (placeholder only)"
+    ]
+  },
+
+  "questions_answered": {
+    "q1_cache_strategy": "NO cache - always query DICT for fresh data",
+    "q2_secrets_management": "AWS Secrets Manager (not HashiCorp Vault)",
+    "q3_migration_tool": "Goose (not Flyway)",
+    "q4_retention_policy": "13 months with monthly partitioning",
+    "q5_timezone": "UTC forced everywhere (TIMESTAMPTZ with AT TIME ZONE 'UTC')",
+    "q6_timestamp_authority": "Use DICT <ResponseTime> as authoritative timestamp",
+    "q7_alert_notification": "Pulsar events to core-dict (not REST callback)",
+    "q8_metrics_export": "Prometheus with AlertManager (no Grafana/PagerDuty initially)",
+    "q9_404_rate_tracking": "Placeholder implementation (returns 0, requires future enhancement)",
+    "q10_psp_category": "Unknown until first query - use 'A' for mocks",
+    "q11_workflow_engine": "Temporal (already in use by orchestration-worker)",
+    "q12_thresholds": "WARNING 20% remaining, CRITICAL 10% remaining (confirmed)",
+    "q13_dict_endpoints": "NO new Dict API endpoints - use Bridge gRPC only"
+  }
+}
